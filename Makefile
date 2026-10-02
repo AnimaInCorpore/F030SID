@@ -106,6 +106,54 @@ $(REF_BUILD)/ref_run$(REF_EXE): tools/ref/ref_run.c src/ref/sid_ref.c src/ref/si
 ref-gate: ref
 	$(PYTHON) tools/ref/voice_gate.py --build $(REF_BUILD) | tee $(REF_BUILD)/gate-results.txt
 
+# --- sidtrace: PSID -> cycle-stamped SID register trace ------------------------
+# Taps the register stream of libsidplayfp's own player. It derives from
+# libsidplayfp's internal sidemu class, so it needs the matching source tree:
+# the release tarball is fetched (checksum-pinned) and built as a static library.
+
+LSFP_VERSION := 2.16.1
+LSFP_SHA256 := ace0f73c2ef8645ab069ce1b298b10e31e36af7b5996109983b2b67ad60ff3ca
+LSFP_URL := https://github.com/libsidplayfp/libsidplayfp/releases/download/v$(LSFP_VERSION)/libsidplayfp-$(LSFP_VERSION).tar.gz
+LSFP_TAR := build/dl/libsidplayfp-$(LSFP_VERSION).tar.gz
+LSFP_SRC := build/dl/libsidplayfp-$(LSFP_VERSION)/src
+LSFP_BUILD := build/lsfp
+LSFP_LIB := $(LSFP_BUILD)/src/.libs/libsidplayfp.a
+
+.PHONY: trace trace-test
+
+trace: $(LSFP_BUILD)/sidtrace$(REF_EXE)
+
+$(LSFP_TAR):
+	@mkdir -p build/dl
+	curl -fsSL -o $@ $(LSFP_URL)
+	echo "$(LSFP_SHA256)  $@" | sha256sum -c -
+
+$(LSFP_SRC)/../configure: $(LSFP_TAR)
+	tar -xzf $< -C build/dl
+	@touch $@
+
+# libsidplayfp's configure needs a POSIX shell with a working expr; from a
+# non-login Git-bash it fails with "invalid feature name", from an MSYS2 login
+# shell (bash -lc) it is fine.
+$(LSFP_LIB): $(LSFP_SRC)/../configure
+	@mkdir -p $(LSFP_BUILD)
+	cd $(LSFP_BUILD) && $(CURDIR)/$(LSFP_SRC)/../configure --disable-shared --enable-static \
+		--without-gcrypt --without-usbsid --without-exsid CXXFLAGS=-O2
+	$(MAKE) -C $(LSFP_BUILD)
+
+$(LSFP_BUILD)/sidtrace$(REF_EXE): tools/trace/sidtrace.cc $(LSFP_LIB)
+	$(HOST_CXX) -O2 -std=gnu++17 -DHAVE_CONFIG_H -I$(LSFP_SRC) \
+		-I$(LSFP_SRC)/builders/residfp-builder -I$(LSFP_SRC)/builders/residfp-builder/residfp \
+		-I$(LSFP_BUILD)/src -I$(LSFP_BUILD)/src/builders/residfp-builder/residfp \
+		$< $(LSFP_LIB) -o $@
+
+# Self-test: trace the hand-assembled tunes and check the timestamps.
+trace-test: trace
+	$(PYTHON) tools/trace/make_test_sid.py
+	$(LSFP_BUILD)/sidtrace$(REF_EXE) -t 1 -o $(LSFP_BUILD)/test_pulse.trace tests/psid/test_pulse.sid
+	$(LSFP_BUILD)/sidtrace$(REF_EXE) -t 1 -o $(LSFP_BUILD)/test_2sid.trace tests/psid/test_2sid.sid
+	$(PYTHON) tools/trace/check_traces.py $(LSFP_BUILD) $(REF_BUILD)
+
 all: host dsp
 
 help:

@@ -68,6 +68,8 @@ Outputs land in `release/`: `f030sid.tos`, `f030sid.ttp`, `sid.lod`,
 - `src/ref/`: the 24-bit integer reference model of the SID voices, gated
   bit-for-bit against reSID (`make ref-gate`); see `src/ref/README.md`.
 - `tools/ref/`: reSID oracle, trace generator and gate scripts.
+- `tools/trace/`: `sidtrace`, which turns a PSID into a cycle-stamped register
+  trace through libsidplayfp (`make trace`); `tests/psid/` has two test tunes.
 - `tools/feasibility/`: aliasing, noise, filter and precision studies behind
   [`docs/sid-feasibility.md`](docs/sid-feasibility.md).
 - `tests/traces/`: future register-write fixtures for oracle comparison.
