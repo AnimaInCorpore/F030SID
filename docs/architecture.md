@@ -60,6 +60,15 @@ kernel.
 3. Hatari integration gates for boot, refill cadence and shutdown, plus the
    inherited `ratetest`/`dspprobe` hardware checks.
 
+## Feasibility
+
+[`sid-feasibility.md`](sid-feasibility.md) concludes that one SID is feasible at
+49.17 kHz (estimated 33-79% of the DSP budget) with polyBLEP-4 band-limited
+oscillators, a TPT state-variable filter with double-precision states, and
+table-driven 6581/8580 character; 2SID is tight and reSID's 6581 filter model
+is out of reach. Cycle costs are estimates until the first DSP loop is
+profiled.
+
 ## Prior art
 
 See [`scummvm-opl-hints.md`](scummvm-opl-hints.md) for what the ScummVM DSP

@@ -65,5 +65,7 @@ Outputs land in `release/`: `f030sid.tos`, `f030sid.ttp`, `sid.lod`,
 - `tools/`: DSP image generator, Hatari resolution, DSP build script.
 - `docs/`: architecture, SID register reference, DSP and Hatari timing notes,
   and [hints from the ScummVM DSP AdLib emulator](docs/scummvm-opl-hints.md).
+- `tools/feasibility/`: aliasing, noise, filter and precision studies behind
+  [`docs/sid-feasibility.md`](docs/sid-feasibility.md).
 - `tests/traces/`: future register-write fixtures for oracle comparison.
 - `third_party/`: pinned references (`f030dsp3d`; `resid` planned as the oracle).
