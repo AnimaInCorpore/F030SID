@@ -174,6 +174,37 @@ def dsp_trace(seed, cycles=500000):
     return ev, cycles
 
 
+def dsp2_trace(seed, cycles=500000):
+    """Voice 0 only, every waveform setting 0-15 (noise, combined waveforms,
+    noise combinations), the test bit, ring and sync bits, every envelope path:
+    what the second DSP milestone implements. Voices 2 and 3 stay idle."""
+    rnd = random.Random(2000 + seed)
+    ev = freq_writes(5, 0, rnd.randint(500, 40000)) + pw_writes(5, 0, rnd.randint(0, 0xFFF))
+    ev += [(6, 5, rnd.randint(0, 255)), (6, 6, rnd.randint(0, 255)), (20, 4, 0x81)]
+    t = 100
+    while t < cycles:
+        t += int(rnd.expovariate(1 / 3000.0)) + 1
+        k = rnd.random()
+        if k < 0.22:
+            ev += freq_writes(t, 0, int(2 ** rnd.uniform(4, 16)) & 0xFFFF)
+        elif k < 0.32:
+            ev += pw_writes(t, 0, rnd.randint(0, 0xFFF))
+        elif k < 0.72:
+            ctl = (rnd.randint(0, 15) << 4) | rnd.choice([0, 1, 1, 1])
+            if rnd.random() < 0.12:
+                ctl |= 0x08
+            if rnd.random() < 0.12:
+                ctl |= 0x04
+            if rnd.random() < 0.12:
+                ctl |= 0x02
+            ev.append((t, 4, ctl))
+        elif k < 0.86:
+            ev.append((t, 5, rnd.randint(0, 255)))
+        else:
+            ev.append((t, 6, rnd.randint(0, 255)))
+    return ev, cycles
+
+
 def main():
     os.makedirs(OUT, exist_ok=True)
     for seed in range(1, 9):
@@ -181,6 +212,8 @@ def main():
         save(f"rand_{seed}", ev, end)
     for seed in range(1, 9):
         save(f"dsp_{seed}", *dsp_trace(seed))
+    for seed in range(1, 11):
+        save(f"dsp2_{seed}", *dsp2_trace(seed))
     save("adsr_bug", *adsr_bug())
     save("noise", *noise())
     save("sync_ring", *sync_ring())

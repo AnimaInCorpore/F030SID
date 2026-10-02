@@ -38,3 +38,28 @@ files. The tool links GPL code (libsidplayfp, reSID).
 
 On Windows run `make` from an MSYS2 login shell (`bash -lc`); from a plain
 Git-bash, libsidplayfp's `configure` fails with "invalid feature name".
+
+## Real tunes: `pick_songs.py`
+
+The unpacked HVSC (`music/`, git-ignored; the tunes are not redistributable) is
+far too large to trace whole, so a test set is picked from it: famous and
+demanding.
+
+```sh
+python3 tools/trace/pick_songs.py scan --hvsc music --sidtrace build/lsfp/sidtrace.exe   # ~6 min
+python3 tools/trace/pick_songs.py select --count 40 --famous 15 > tests/songs.txt
+```
+
+`scan` traces 20 s (after skipping 5 s) of every tune of 22 composers who
+account for much of the C64's famous and technically demanding music (1,212
+tunes) and extracts, from the register writes alone, what is hard on the
+emulation: a moving filter cutoff, `$D418` written at sample rate (digi
+playback), hard sync, ring modulation, combined waveforms and noise
+combinations, the test bit, pulse-width modulation, the write rate. HVSC does
+not record popularity, so fame is a curated list of titles; `select` takes the
+most demanding of the famous ones first (`--famous`), then the most demanding
+overall, with at most five per composer. `tests/songs.txt` is the result: 40
+tunes, 18 of them famous, with the reasons. It lists paths into HVSC only;
+traces are written under `build/songs/` (ignored). No tune in this selection
+is multi-SID: the scanned composers' multi-SID tunes were not among the
+candidates, so 2SID/3SID needs a separate pick.

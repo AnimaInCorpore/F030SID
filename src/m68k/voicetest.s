@@ -23,7 +23,7 @@ MAX_FRAMES      equ     40000
 DSP_HOST_ISR    equ     $ffffa202
 DSP_HOST_DATA   equ     $ffffa204
 
-; Load `count` words from `table` into DSP X memory at `addr`.
+; Load `count` words from `table` into DSP X (LOADX) or Y (LOADY) memory at `addr`.
         macro   LOADX addr,count,table
         move.l  #DSP_CMD_LOAD_X,d0
         bsr     dsp_put
@@ -36,6 +36,21 @@ DSP_HOST_DATA   equ     $ffffa204
 lx\@:   move.l  (a2)+,d0
         bsr     dsp_put
         dbra    d3,lx\@
+        bsr     dsp_get
+        endm
+
+        macro   LOADY addr,count,table
+        move.l  #DSP_CMD_LOAD_Y,d0
+        bsr     dsp_put
+        move.l  #\1,d0
+        bsr     dsp_put
+        move.l  #\2,d0
+        bsr     dsp_put
+        lea     \3,a2
+        move.w  #\2-1,d3
+ly\@:   move.l  (a2)+,d0
+        bsr     dsp_put
+        dbra    d3,ly\@
         bsr     dsp_get
         endm
 
@@ -80,11 +95,19 @@ run_vector:
         LOADX   DSP_X_SUST_TAB,16,tab_sust
         LOADX   DSP_X_ENV_DAC,256,tab_envdac
         LOADX   DSP_X_WAVE_DAC,4096,tab_wavedac
+        LOADY   DSP_Y_WAVE3,4096,tab_wave3
+        LOADY   DSP_Y_WAVE5,4096,tab_wave5
+        LOADX   DSP_X_WAVE6,4096,tab_wave6
+        LOADX   DSP_X_WAVE7,4096,tab_wave7
         move.l  #DSP_CMD_CONFIG,d0
         bsr     dsp_put
         move.l  #cfg_wave_zero,d0
         bsr     dsp_put
         move.l  #cfg_ttl_start,d0
+        bsr     dsp_put
+        move.l  #cfg_model,d0
+        bsr     dsp_put
+        move.l  #cfg_sr_start,d0
         bsr     dsp_put
         bsr     dsp_get
 

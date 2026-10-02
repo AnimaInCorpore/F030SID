@@ -5,7 +5,7 @@ milestone by milestone against the C reference model (`src/ref/`, see
 `src/ref/README.md`). Every milestone is gated bit for bit: the reference model
 and the DSP must return identical words for the same register trace.
 
-## Milestone 1 (done): voice 0, exact
+## Milestones 1 and 2 (done): voice 0, exact
 
 What runs on the DSP, frame by frame on request (`DSP_CMD_FRAME`):
 
@@ -19,9 +19,24 @@ What runs on the DSP, frame by frame on request (`DSP_CMD_FRAME`):
 - the output stage: `(wave DAC[code] - zero) * envelope DAC[env]`, a 24-bit
   signed word, for either chip model (the host loads the tables).
 
-Not yet: noise, combined waveforms, sync and ring modulation, voices 2 and 3,
-the filter, band-limiting (polyBLEP and the sample-instant phase), the SSI
-stream. Writes to those registers are accepted and ignored.
+Milestone 2 added the rest of the oscillator for voice 0:
+
+- the 23-bit noise register, clocked from the phase exactly as reSID's bulk path
+  does (its shift-period loop), the eight-bit gather into the noise output, and
+  the register reset while the test bit is held (35,000 cycles on the 6581,
+  2,519,864 on the 8580);
+- every waveform setting 0-15: the combined waveforms read reSID's sampled
+  tables (3, 5, 6, 7 for the model), noise and pulse mask the result;
+- the 6581's clearing of phase bits for saw combinations, noise combinations
+  writing their output back into the register, `do_pre_writeback` and the shift
+  on the test bit's falling edge, and the noise+pulse special function that
+  runs after a control write;
+- ring modulation, against an idle voice 3 (its phase never changes, so it is a
+  constant until voices 2 and 3 exist).
+
+Not yet: sync, voices 2 and 3, the filter, band-limiting (polyBLEP and the
+sample-instant phase), the SSI stream. Writes to those registers are accepted
+and ignored.
 
 ### Gate
 
@@ -40,10 +55,13 @@ make dsp-gate DSP_GATE_ARGS=--quick # two traces, one model
    frames over the host port, and saves the output words to `VOICEOUT.BIN`;
 3. the words are compared with the expected output. One differing word fails.
 
-Supported traces: `dsp_1..8` (random voice 0 traffic: all four waveform
-settings, test bit, gate toggles, AD/SR changes under a running envelope),
-`adsr_bug`, and the saw/pulse/triangle `tone_*` notes. Results:
-`tools/dsp/gate_results.txt`.
+Supported traces: `dsp2_1..10` (random voice 0 traffic over all 16 waveform
+settings with test, ring and sync bits, gate toggles, AD/SR changes under a
+running envelope), `noise` (every noise rate, test-bit resets, noise+triangle),
+`dsp_1..8` (the milestone 1 set: no noise or combinations), `adsr_bug`, and the
+saw/pulse/triangle `tone_*` notes. Results: `tools/dsp/gate_results.txt`
+(`gate_results_m1.txt` is the milestone 1 run). A deliberate one-bit error in
+the noise feedback tap fails `dsp2_1` at frame 3172, so the gate is sensitive.
 
 Two details that cost time and are worth knowing:
 
@@ -74,21 +92,25 @@ register cleared (zero wait states on external memory).
 | X internal | $60-$7f | register shadow for `READ_REG` |
 | X external | $0200-$02ff | envelope DAC (host-loaded) |
 | X external | $0400-$13ff | waveform DAC (host-loaded) |
+| X external | $1400-$23ff, $2400-$33ff | combined waveform tables 6, 7 (host-loaded) |
+| Y external | $1400-$23ff, $2400-$33ff | combined waveform tables 3, 5 (host-loaded) |
 
-External P aliases external Y (docs/dsp56001-notes.md), so the kernel's
-external-P tail and later Y tables must not collide; none exist yet.
+External P aliases external Y (docs/dsp56001-notes.md): the kernel (1,237 words,
+to P:$04d5) stays below P:$1400 and the Y tables sit above it. The Hatari gate
+exercises this aliasing.
 
 ## Protocol (v2)
 
 `src/dsp/protocol.inc`: every command is a burst of 24-bit host words and gets
 exactly one reply word. `PING`, `WRITE_REG reg,value`, `READ_REG reg`, `RESET`,
-`LOAD_X addr,count,words...`, `CONFIG zero,ttl`, `FRAME` (reply: the voice 0
-output as a 24-bit two's-complement word).
+`LOAD_X addr,count,words...`, `LOAD_Y addr,count,words...`,
+`CONFIG zero,ttl,model,shift_reset_start`, `FRAME` (reply: the voice 0 output as
+a 24-bit two's-complement word).
 
 ## Next
 
 1. Cycle cost of the frame path in the calibrated Hatari (`make profile-voice`).
-2. Noise and the combined-waveform tables, sync and ring modulation, voices 2
-   and 3: each extends the gate's trace set to the full random traces.
+2. Sync, voices 2 and 3 (and ring modulation against a live voice 3): these
+   extend the gate to the full three-voice random traces and the filter inputs.
 3. Band-limited output (sample-instant phase, polyBLEP-4), then the filter.
 4. The SSI stream and the player (PSID loader, 6502 core, timestamped writes).

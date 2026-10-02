@@ -158,6 +158,11 @@ const uint16_t *sid_tab_wave_dac(sid_model_t m) { return wave_dac[m]; }
 const uint16_t *sid_tab_env_dac(sid_model_t m) { return env_dac[m]; }
 const uint16_t *sid_tab_rate_period(void) { return rate_counter_period; }
 const uint8_t *sid_tab_sustain_level(void) { return sustain_level; }
+const uint16_t *sid_tab_wave(sid_model_t m, int w) { return wave_table[m][w & 7]; }
+int32_t sid_shift_reset_start(sid_model_t m)
+{
+    return m == SID_MOS6581 ? SHIFT_REGISTER_RESET_START_6581 : SHIFT_REGISTER_RESET_START_8580;
+}
 int32_t sid_wave_zero(sid_model_t m) { return wave_zero[m]; }
 int32_t sid_floating_ttl_start(sid_model_t m)
 {

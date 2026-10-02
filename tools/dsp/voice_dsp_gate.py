@@ -24,7 +24,10 @@ ROOT = os.path.normpath(os.path.join(HERE, "..", ".."))
 TRACES = os.path.join(ROOT, "tests", "traces")
 
 # Milestone 1: voice 0, waveforms none/triangle/saw/pulse, test bit, ADSR.
-SUPPORTED = ([f"dsp_{i}" for i in range(1, 9)] + ["adsr_bug"] +
+# Milestone 2: every waveform setting incl. noise and the combined waveforms
+# (dsp2_*, noise), ring bit with an idle voice 3.
+SUPPORTED = ([f"dsp2_{i}" for i in range(1, 11)] + ["noise"] +
+             [f"dsp_{i}" for i in range(1, 9)] + ["adsr_bug"] +
              [f"tone_{k}_{f}" for k in ("saw", "pulse", "tri")
               for f in (1873, 7509, 17250, 34190, 64720)])
 

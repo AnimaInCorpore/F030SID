@@ -1,15 +1,17 @@
 ; F030SID DSP kernel
 ;
-; Milestone 1: voice 0 of the reference model (src/ref/sid_ref.c), bit for bit
-; against the C model for waveforms none/triangle/saw/pulse, the test bit, the
-; exact ADSR state machine, and the 24-bit output (wave DAC - zero) * envelope
-; DAC. Frame by frame on host request (DSP_CMD_FRAME); the SSI stream, noise,
-; combined waveforms, sync/ring, voices 2-3, the filter and band-limiting
-; follow in later milestones. See docs/dsp-kernel.md.
+; Milestone 2: voice 0 of the reference model (src/ref/sid_ref.c), bit for bit
+; against the C model for every waveform setting (none, triangle, saw, pulse,
+; noise and all combinations, the combined-waveform tables, the 6581 phase
+; clearing and noise write-back), ring modulation by an idle voice 3, the test
+; bit and the noise register's reset, the exact ADSR state machine, and the
+; 24-bit output (wave DAC - zero) * envelope DAC. Frame by frame on host
+; request (DSP_CMD_FRAME). Voices 2-3, sync, the filter, band-limiting and the
+; SSI stream follow in later milestones. See docs/dsp-kernel.md.
 ;
 ; Loaded in two stages: a 512-word bootstrap (stage2_loader.asm) installs this
 ; sparse program, which may extend into external P RAM, and jumps to P:$0000.
-; The host then loads the tables with DSP_CMD_LOAD_X.
+; The host then loads the tables with DSP_CMD_LOAD_X / DSP_CMD_LOAD_Y.
 ;
 ; Register conventions: a, b, x0, x1, y0, r0, r1, n0, n1 are scratch;
 ; y1 holds the written value across the write_reg handlers.
@@ -56,6 +58,15 @@ S_TMPDT         equ     $1a
 S_TMPSTEP       equ     $1b
 S_TMPA          equ     $1c
 S_TMPB          equ     $1d
+S_SR            equ     $1e             ; 23-bit noise shift register
+S_SRRESET       equ     $1f             ; test-bit shift register reset countdown
+S_NOISE         equ     $20             ; noise_output (12-bit gather of the register)
+S_MODEL         equ     $21             ; 0 = 6581, 1 = 8580 (config)
+S_SRSTART       equ     $22             ; shift register reset start (config)
+S_DELTA         equ     $23             ; freq * n, phase advance of this frame
+S_SHIFTPER      equ     $24             ; noise shift period of the frame loop
+S_RING          equ     $25             ; $800 when the triangle is ring-modulated, else 0
+S_TMPC          equ     $26             ; waveform table index
 S_SHADOW        equ     $60             ; 32-word register shadow
 
         org     p:$0000
@@ -79,6 +90,9 @@ main_loop:
         move    #>DSP_CMD_LOAD_X,x0
         cmp     x0,a
         jeq     cmd_load
+        move    #>DSP_CMD_LOAD_Y,x0
+        cmp     x0,a
+        jeq     cmd_load_y
         move    #>DSP_CMD_CONFIG,x0
         cmp     x0,a
         jeq     cmd_config
@@ -108,7 +122,7 @@ reply:                                  ; a1 = reply word
 
 ; ---------------------------------------------------------------- host side
 
-cmd_load:                               ; address, count, words
+cmd_load:                               ; address, count, words -> X memory
         jclr    #0,x:m_hsr,*
         movep   x:m_hrx,x1
         move    x1,r0
@@ -120,13 +134,31 @@ cmd_load:                               ; address, count, words
 load_done:
         jmp     reply_ok
 
-cmd_config:                             ; wave zero level, floating TTL start
+cmd_load_y:                             ; address, count, words -> Y memory
+        jclr    #0,x:m_hsr,*
+        movep   x:m_hrx,x1
+        move    x1,r0
+        jclr    #0,x:m_hsr,*
+        movep   x:m_hrx,x1
+        do      x1,load_y_done
+        jclr    #0,x:m_hsr,*
+        movep   x:m_hrx,y:(r0)+
+load_y_done:
+        jmp     reply_ok
+
+cmd_config:                             ; wave zero, floating TTL, model, shift reset start
         jclr    #0,x:m_hsr,*
         movep   x:m_hrx,x0
         move    x0,x:<S_ZERO
         jclr    #0,x:m_hsr,*
         movep   x:m_hrx,x0
         move    x0,x:<S_TTLSTART
+        jclr    #0,x:m_hsr,*
+        movep   x:m_hrx,x0
+        move    x0,x:<S_MODEL
+        jclr    #0,x:m_hsr,*
+        movep   x:m_hrx,x0
+        move    x0,x:<S_SRSTART
         jmp     reply_ok
 
 cmd_read:                               ; reg -> shadow value
@@ -267,6 +299,7 @@ wr_sr:
         move    a1,x:<S_RATEPER
         jmp     reply_ok
 
+; WaveformGenerator::writeCONTROL_REG, then EnvelopeGenerator's
 wr_control:
         move    x:<S_WAVEFORM,a
         move    a1,x:<S_TMPA            ; waveform_prev
@@ -280,22 +313,53 @@ wr_control:
         move    #>8,x0
         and     x0,a
         move    a1,x:<S_TEST
+        clr     a                       ; ring: bit 2 set and the saw bit (5) clear
+        move    a1,x:<S_RING
+        jset    #5,y1,wc_ring_done
+        jclr    #2,y1,wc_ring_done
+        move    #>$800,x0
+        move    x0,x:<S_RING
+wc_ring_done:
         move    x:<S_TMPB,a
         tst     a
-        jne     wc_after_test           ; falling edge only touches the noise register
-        move    x:<S_TEST,a
+        jne     wc_test_was_on
+        move    x:<S_TEST,a             ; test off before
         tst     a
         jeq     wc_after_test
-        clr     a                       ; test rising: phase to 0, pulse high
+        clr     a                       ; test rising: phase 0, shift register reset, pulse high
         move    a1,x:<S_ACC
+        move    x:<S_SRSTART,x0
+        move    x0,x:<S_SRRESET
         move    #>$fff,x0
         move    x0,x:<S_PULSE
+        jmp     wc_after_test
+wc_test_was_on:
+        move    x:<S_TEST,a
+        tst     a
+        jne     wc_after_test           ; test stays on
+        jsr     pre_writeback_check     ; test falling: maybe write the waveform into the register
+        tst     a
+        jeq     wc_nowb
+        jsr     write_shift_register
+wc_nowb:
+        move    x:<S_SR,x0              ; bit0 = (~sr >> 17) & 1; one shift
+        clr     b
+        jset    #17,x0,wc_bit0_done
+        move    #>1,b
+wc_bit0_done:
+        move    x0,a
+        lsl     a
+        move    b1,x0
+        or      x0,a
+        move    #>$7fffff,x0
+        and     x0,a
+        move    a1,x:<S_SR
+        jsr     set_noise_output
 wc_after_test:
         move    x:<S_WAVEFORM,a
         tst     a
         jeq     wc_nowave
-        jsr     calc_wave_code
-        jsr     calc_pulse_out
+        jsr     wave_set_output
         jmp     wc_env
 wc_nowave:
         move    x:<S_TMPA,a             ; waveform dropped to none: output floats
@@ -357,38 +421,340 @@ cpo_low:
         move    a1,x:<S_PULSE
         rts
 
-; waveform_output for waveform 1 (triangle), 2 (saw) or 4 (pulse), from the
-; phase at the frame's integer cycle. Combined waveforms and noise: later.
-calc_wave_code:
+; noise_output: the eight scattered register bits 20,18,14,11,9,5,2,0 gathered
+; into bits 11..4
+set_noise_output:
+        move    x:<S_SR,x0
+        clr     b
+        jclr    #20,x0,sn_1
+        move    #>$800,y0
+        or      y0,b
+sn_1:
+        jclr    #18,x0,sn_2
+        move    #>$400,y0
+        or      y0,b
+sn_2:
+        jclr    #14,x0,sn_3
+        move    #>$200,y0
+        or      y0,b
+sn_3:
+        jclr    #11,x0,sn_4
+        move    #>$100,y0
+        or      y0,b
+sn_4:
+        jclr    #9,x0,sn_5
+        move    #>$80,y0
+        or      y0,b
+sn_5:
+        jclr    #5,x0,sn_6
+        move    #>$40,y0
+        or      y0,b
+sn_6:
+        jclr    #2,x0,sn_7
+        move    #>$20,y0
+        or      y0,b
+sn_7:
+        jclr    #0,x0,sn_8
+        move    #>$10,y0
+        or      y0,b
+sn_8:
+        move    b1,x:<S_NOISE
+        rts
+
+; one shift: bit0 = bit22 ^ bit17, sr = ((sr << 1) | bit0) & $7fffff
+clock_shift_register:
+        move    x:<S_SR,x0
+        clr     b
+        jclr    #22,x0,cs_1
+        move    #>1,b
+cs_1:
+        jclr    #17,x0,cs_2
+        move    #>1,y0
+        eor     y0,b
+cs_2:
+        move    x0,a
+        lsl     a
+        move    b1,x0
+        or      x0,a
+        move    #>$7fffff,x0
+        and     x0,a
+        move    a1,x:<S_SR
+        jmp     set_noise_output
+
+; Noise combined with another waveform writes the waveform back into the
+; register: each of the eight tapped bits is cleared when the matching output
+; bit (11..4) is clear; the noise output is ANDed with the waveform.
+write_shift_register:
+        move    x:<S_WAVEOUT,x0
+        move    x:<S_SR,a
+        jset    #11,x0,ws_1
+        move    #>$efffff,y0
+        and     y0,a
+ws_1:
+        jset    #10,x0,ws_2
+        move    #>$fbffff,y0
+        and     y0,a
+ws_2:
+        jset    #9,x0,ws_3
+        move    #>$ffbfff,y0
+        and     y0,a
+ws_3:
+        jset    #8,x0,ws_4
+        move    #>$fff7ff,y0
+        and     y0,a
+ws_4:
+        jset    #7,x0,ws_5
+        move    #>$fffdff,y0
+        and     y0,a
+ws_5:
+        jset    #6,x0,ws_6
+        move    #>$ffffdf,y0
+        and     y0,a
+ws_6:
+        jset    #5,x0,ws_7
+        move    #>$fffffb,y0
+        and     y0,a
+ws_7:
+        jset    #4,x0,ws_8
+        move    #>$fffffe,y0
+        and     y0,a
+ws_8:
+        move    a1,x:<S_SR
+        move    x:<S_NOISE,a
+        and     x0,a
+        move    a1,x:<S_NOISE
+        rts
+
+; do_pre_writeback(prev, current, is6581) -> a1 = 1 or 0
+pre_writeback_check:
+        move    x:<S_TMPA,a
+        move    #>8,x0
+        cmp     x0,a
+        jle     pw_no                   ; prev <= 8
+        move    #>$c,x0
+        cmp     x0,a
+        jne     pw_chk6581
+        move    x:<S_MODEL,b            ; prev == $c
+        tst     b
+        jeq     pw_no                   ; 6581: no
+        move    x:<S_WAVEFORM,a
+        move    #>9,x0
+        cmp     x0,a
+        jeq     pw_chk6581
+        move    #>$e,x0
+        cmp     x0,a
+        jne     pw_no
+pw_chk6581:
+        move    x:<S_MODEL,a
+        tst     a
+        jne     pw_yes                  ; 8580 stops here
+        move    x:<S_TMPA,a             ; 6581: triangle <-> saw switches do not
+        move    #>3,x0
+        and     x0,a
+        move    a1,y0                   ; y0 = prev & 3
+        move    x:<S_WAVEFORM,a
+        and     x0,a                    ; a = current & 3
+        move    #>2,x0
+        cmp     x0,a
+        jne     pw_c1
+        move    #>1,x0
+        move    y0,b
+        cmp     x0,b
+        jeq     pw_no
+        jmp     pw_yes
+pw_c1:
+        move    #>1,x0
+        cmp     x0,a
+        jne     pw_yes
+        move    #>2,x0
+        move    y0,b
+        cmp     x0,b
+        jeq     pw_no
+pw_yes:
+        move    #>1,a
+        rts
+pw_no:
+        clr     a
+        rts
+
+; The waveform code from the tables: base[ix] & (pulse if the pulse bit) &
+; (noise output if the noise bit), ix = acc >> 12 (ring-modulated if set).
+; Triangle and saw are computed; the pulse alone and noise alone read $fff.
+; The result is left in a1.
+wave_core:
         clr     a
         move    x:<S_ACC,a1
         rep     #12
-        lsr     a                       ; a1 = ix
-        move    x:<S_WAVEFORM,b
-        move    #>2,y0
-        cmp     y0,b
-        jeq     cw_store                ; saw: the code is ix
-        move    #>4,y0
-        cmp     y0,b
-        jeq     cw_pulse
-        move    a1,x0                   ; triangle: ((ix ^ (msb ? $7ff : 0)) & $7ff) << 1
+        lsr     a
+        move    x:<S_RING,x0
+        eor     x0,a
+        move    a1,x:<S_TMPC            ; ix
+        move    x:<S_WAVEFORM,a
+        move    #>7,x0
+        and     x0,a
+        tst     a
+        jeq     wcore_fff               ; waveform & 7 == 0: noise alone
+        move    #>1,x0
+        cmp     x0,a
+        jeq     wcore_tri
+        move    #>2,x0
+        cmp     x0,a
+        jeq     wcore_saw
+        move    #>3,x0
+        cmp     x0,a
+        jeq     wcore_t3
+        move    #>4,x0
+        cmp     x0,a
+        jeq     wcore_fff               ; pulse alone: $fff & pulse
+        move    #>5,x0
+        cmp     x0,a
+        jeq     wcore_t5
+        move    #>6,x0
+        cmp     x0,a
+        jeq     wcore_t6
+wcore_t7:
+        move    x:<S_TMPC,n1
+        move    #>DSP_X_WAVE7,r1
+        nop
+        move    x:(r1+n1),a
+        jmp     wcore_join
+wcore_t6:
+        move    x:<S_TMPC,n1
+        move    #>DSP_X_WAVE6,r1
+        nop
+        move    x:(r1+n1),a
+        jmp     wcore_join
+wcore_t5:
+        move    x:<S_TMPC,n1
+        move    #>DSP_Y_WAVE5,r1
+        nop
+        move    y:(r1+n1),a
+        jmp     wcore_join
+wcore_t3:
+        move    x:<S_TMPC,n1
+        move    #>DSP_Y_WAVE3,r1
+        nop
+        move    y:(r1+n1),a
+        jmp     wcore_join
+wcore_fff:
+        move    #>$fff,a
+        jmp     wcore_join
+wcore_saw:
+        move    x:<S_TMPC,a
+        jmp     wcore_join
+wcore_tri:                              ; ((ix ^ (msb ? $7ff : 0)) & $7ff) << 1
+        move    x:<S_TMPC,a
+        move    a1,x0
         move    #>$7ff,y0
-        jclr    #11,x0,cw_nofold
+        jclr    #11,x0,wcore_nofold
         eor     y0,a
-cw_nofold:
+wcore_nofold:
         and     y0,a
         lsl     a
-        jmp     cw_store
-cw_pulse:
-        move    x:<S_PULSE,a
-cw_store:
-        move    a1,x:<S_WAVEOUT
+wcore_join:
+        move    x:<S_WAVEFORM,x0
+        jclr    #2,x0,wcore_nopulse
+        move    x:<S_PULSE,x0
+        and     x0,a
+wcore_nopulse:
+        move    x:<S_WAVEFORM,x0
+        jclr    #3,x0,wcore_nonoise
+        move    x:<S_NOISE,x0
+        and     x0,a
+wcore_nonoise:
         rts
+
+; after waveform_output is stored: the 6581 clears phase bits for saw
+; combinations, and noise combinations write back into the register
+wave_post:
+        move    x:<S_MODEL,a
+        tst     a
+        jne     wp_noacc                ; 8580
+        move    x:<S_WAVEFORM,x0
+        jclr    #1,x0,wp_noacc
+        move    #>$d,y0
+        move    x0,a
+        and     y0,a
+        tst     a
+        jeq     wp_noacc
+        move    x:<S_WAVEOUT,a          ; acc &= (waveform_output << 12) | $7fffff
+        rep     #12
+        asl     a
+        move    #>$7fffff,x0
+        or      x0,a
+        move    x:<S_ACC,x0
+        and     x0,a
+        move    a1,x:<S_ACC
+wp_noacc:
+        move    x:<S_WAVEFORM,a
+        move    #>8,x0
+        cmp     x0,a
+        jle     wp_done
+        move    x:<S_TEST,a
+        tst     a
+        jne     wp_done
+        jsr     write_shift_register
+wp_done:
+        rts
+
+; reSID WaveformGenerator::set_waveform_output(): used after a control write.
+; It also maps noise + pulse through the model's noise_pulse function and
+; recomputes pulse_output.
+wave_set_output:
+        jsr     wave_core
+        move    a1,x:<S_WAVEOUT
+        move    x:<S_WAVEFORM,b
+        move    #>$c,y0
+        and     y0,b
+        cmp     y0,b
+        jne     wso_post
+        move    x:<S_WAVEOUT,x0         ; noise_pulse
+        move    x:<S_MODEL,a
+        tst     a
+        jne     wso_8580
+        move    x0,a                    ; 6581: noise < $f00 ? 0 : n & (n<<1) & (n<<2)
+        move    #>$f00,y0
+        cmp     y0,a
+        jge     wso_6581_hi
+        clr     a
+        jmp     wso_np_store
+wso_6581_hi:
+        lsl     a
+        and     x0,a
+        move    a1,y0
+        move    x0,a
+        lsl     a
+        lsl     a
+        and     x0,a
+        and     y0,a
+        jmp     wso_np_store
+wso_8580:
+        move    x0,a                    ; 8580: noise < $fc0 ? n & (n<<1) : $fc0
+        move    #>$fc0,y0
+        cmp     y0,a
+        jge     wso_8580_hi
+        lsl     a
+        and     x0,a
+        jmp     wso_np_store
+wso_8580_hi:
+        move    #>$fc0,a
+wso_np_store:
+        move    a1,x:<S_WAVEOUT
+wso_post:
+        jsr     wave_post
+        jsr     calc_pulse_out
+        rts
+
+; reSID set_waveform_output(delta_t): used every frame
+calc_wave_code:
+        jsr     wave_core
+        move    a1,x:<S_WAVEOUT
+        jmp     wave_post
 
 reset_state:                            ; the model's power-on state
         clr     a
         move    #0,r0
-        rep     #$20
+        rep     #$40
         move    a,x:(r0)+
         move    #>S_SHADOW,r0
         rep     #32
@@ -406,7 +772,9 @@ reset_state:                            ; the model's power-on state
         move    #>ST_RELEASE,x0
         move    x0,x:<S_STATE
         move    x0,x:<S_NEXT
-        rts
+        move    #>$7ffffe,x0
+        move    x0,x:<S_SR
+        jmp     set_noise_output
 
 ; ---------------------------------------------------------------- one frame
 
@@ -431,15 +799,64 @@ cmd_frame:
         move    x:<S_N,y0
         mpy     x0,y0,a
         asr     a
+        move    a0,x:<S_DELTA
         move    a0,x0
         clr     a                       ; acc = (acc + delta) & $ffffff
         move    x:<S_ACC,a0
         move    #0,x1
         add     x,a
         move    a0,x:<S_ACC
+        move    #>$100000,x0            ; noise register steps (reSID's shift loop)
+        move    x0,x:<S_SHIFTPER
+fr_shift_loop:
+        move    x:<S_DELTA,a
+        tst     a
+        jeq     fr_shift_done
+        move    x:<S_SHIFTPER,x0
+        cmp     x0,a
+        jge     fr_shift_step           ; delta >= period: step
+        move    a1,x:<S_SHIFTPER        ; period = delta; stop unless a bit-19 edge is crossed
+        move    a1,x0
+        move    #>$080000,y0
+        cmp     y0,a
+        jgt     fr_big
+        move    x:<S_ACC,a              ; period <= $80000
+        sub     x0,a
+        jset    #19,a1,fr_shift_done    ; ((acc - period) & $80000) -> stop
+        move    x:<S_ACC,a
+        jclr    #19,a1,fr_shift_done    ; !(acc & $80000) -> stop
+        jmp     fr_shift_step
+fr_big:
+        move    x:<S_ACC,a              ; period > $80000
+        sub     x0,a
+        jclr    #19,a1,fr_shift_step    ; !((acc - period) & $80000) -> step
+        move    x:<S_ACC,a
+        jset    #19,a1,fr_shift_step    ; (acc & $80000) -> step
+        jmp     fr_shift_done
+fr_shift_step:
+        jsr     clock_shift_register
+        move    x:<S_DELTA,a
+        move    x:<S_SHIFTPER,x0
+        sub     x0,a
+        move    a1,x:<S_DELTA
+        jmp     fr_shift_loop
+fr_shift_done:
         jsr     calc_pulse_out
         jmp     fr_wave
 fr_test:
+        move    x:<S_SRRESET,a          ; test: the register reset countdown runs
+        tst     a
+        jeq     fr_test_pulse
+        move    x:<S_N,x0
+        sub     x0,a
+        jgt     fr_srr_keep
+        move    #>$7fffff,x0
+        move    x0,x:<S_SR
+        jsr     set_noise_output
+        clr     a
+fr_srr_keep:
+        move    a1,x:<S_SRRESET
+fr_test_pulse:
         move    #>$fff,x0
         move    x0,x:<S_PULSE
 

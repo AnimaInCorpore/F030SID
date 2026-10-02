@@ -107,6 +107,8 @@ const uint16_t *sid_tab_wave_dac(sid_model_t model);   /* 4096 entries */
 const uint16_t *sid_tab_env_dac(sid_model_t model);    /* 256 entries */
 const uint16_t *sid_tab_rate_period(void);             /* 16 entries */
 const uint8_t  *sid_tab_sustain_level(void);           /* 16 entries */
+const uint16_t *sid_tab_wave(sid_model_t model, int waveform); /* 4096 entries, waveform 0..7 */
+int32_t sid_shift_reset_start(sid_model_t model);
 int32_t sid_wave_zero(sid_model_t model);
 int32_t sid_floating_ttl_start(sid_model_t model);
 

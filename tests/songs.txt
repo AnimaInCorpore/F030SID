@@ -1,0 +1,42 @@
+# Test tunes picked from HVSC by tools/trace/pick_songs.py (famous and demanding).
+# path (under the HVSC root) | score | what makes it demanding
+MUSICIANS/T/Tel_Jeroen/Afterburner.sid | 15.02 | famous, digi 5126/s, filter (cutoff 63/s), ring, pwm
+MUSICIANS/G/Galway_Martin/Combat_School.sid | 13.73 | famous, digi 2195/s, sync, ring, test, pwm
+MUSICIANS/T/Tel_Jeroen/Turbo_Outrun.sid | 13.47 | famous, digi 3650/s, filter (cutoff 51/s), test, pwm
+MUSICIANS/H/Huelsbeck_Chris/Great_Giana_Sisters.sid | 13.4 | famous, digi 6903/s, filter (cutoff 80/s), pwm
+MUSICIANS/B/Bjerregaard_Johannes/Metallic.sid | 13.1 | digi 3299/s, sync, ring, combined, noise combined, test, pwm
+MUSICIANS/O/Ouwehand_Reyn/Armada.sid | 11.73 | famous, filter (cutoff 45/s), sync, ring, pwm
+MUSICIANS/H/Huelsbeck_Chris/To_be_on_Top.sid | 11.5 | digi 6688/s, filter (cutoff 1/s), ring, test, pwm
+MUSICIANS/O/Ouwehand_Reyn/Audio_Art.sid | 11.25 | filter (cutoff 50/s), sync, ring, combined, noise combined, test, pwm
+MUSICIANS/L/Laxity/Mojo_Outro.sid | 11.01 | filter (cutoff 102/s), sync, ring, combined, test, pwm
+MUSICIANS/G/Galway_Martin/Short_Circuit.sid | 11.0 | famous, filter (cutoff 518/s), test, pwm
+MUSICIANS/T/Tel_Jeroen/RoboCop_3.sid | 11.0 | famous, filter (cutoff 0/s), sync, ring, test, pwm
+MUSICIANS/G/Galway_Martin/Arkanoid_alternative_drums.sid | 10.77 | famous, digi 3822/s, test, pwm
+MUSICIANS/B/Bjerregaard_Johannes/Mixerplot.sid | 10.76 | filter (cutoff 152/s), sync, ring, combined, test, pwm
+MUSICIANS/O/Ouwehand_Reyn/Arena.sid | 10.73 | digi 3567/s, filter (cutoff 109/s), test, pwm
+MUSICIANS/H/Hubbard_Rob/Mr_Meaner.sid | 10.58 | digi 4749/s, filter (cutoff 17/s), sync, pwm
+MUSICIANS/L/Laxity/Cocktail_to_Go_tune_2.sid | 10.51 | filter (cutoff 102/s), sync, ring, combined, test, pwm
+MUSICIANS/L/Laxity/Five_Clowns.sid | 10.51 | filter (cutoff 102/s), sync, ring, combined, test, pwm
+MUSICIANS/G/Galway_Martin/Wizball.sid | 10.5 | famous, filter (cutoff 407/s), test, pwm
+MUSICIANS/H/Huelsbeck_Chris/Danger_Freak.sid | 10.5 | digi 5617/s, filter (cutoff 26/s), test, pwm
+MUSICIANS/B/Bjerregaard_Johannes/Stormlord.sid | 10.37 | digi 4846/s, filter (cutoff 51/s), pwm
+MUSICIANS/T/Tel_Jeroen/Hawkeye_Proto_1.sid | 10.24 | famous, filter (cutoff 48/s), ring, pwm
+MUSICIANS/H/Hubbard_Rob/Knucklebusters.sid | 10.23 | famous, filter (cutoff 45/s), sync, pwm
+MUSICIANS/T/Tel_Jeroen/Hawkeye.sid | 10.23 | famous, filter (cutoff 47/s), ring, pwm
+MUSICIANS/F/Follin_Tim/Bionic_Commando.sid | 10.18 | famous, filter (cutoff 102/s), ring, pwm
+MUSICIANS/H/Hubbard_Rob/Sanxion.sid | 10.16 | famous, filter (cutoff 20/s), sync, ring, pwm
+MUSICIANS/O/Ouwehand_Reyn/High_Resolution.sid | 10.16 | filter (cutoff 45/s), sync, ring, combined, test, pwm
+MUSICIANS/H/Hubbard_Rob/Ricochet.sid | 10.13 | digi 1895/s, sync, ring, pwm
+MUSICIANS/G/Galway_Martin/Terra_Cresta.sid | 10.07 | famous, filter (cutoff 314/s), test, pwm
+MUSICIANS/O/Ouwehand_Reyn/Turbocharge_preview_digis.sid | 10.07 | digi 3174/s, filter (cutoff 102/s), pwm
+MUSICIANS/L/Laxity/ECM_Matrix.sid | 10.01 | filter (cutoff 102/s), sync, ring, combined, pwm
+MUSICIANS/L/Laxity/German_Foot.sid | 10.01 | filter (cutoff 102/s), sync, ring, combined, pwm
+MUSICIANS/H/Huelsbeck_Chris/Antics_Chip_War.sid | 9.91 | digi 5730/s, ring, pwm
+MUSICIANS/B/Bjerregaard_Johannes/Deel_2.sid | 9.75 | filter (cutoff 51/s), sync, combined, noise combined, test, pwm
+MUSICIANS/H/Hubbard_Rob/After_8.sid | 9.69 | digi 2062/s, filter (cutoff 0/s), sync, pwm
+MUSICIANS/D/Daglish_Ben/Future_Knight_II.sid | 9.5 | famous, sync, ring, pwm
+MUSICIANS/H/Huelsbeck_Chris/Katakis.sid | 9.29 | famous, filter (cutoff 58/s), test, pwm
+MUSICIANS/B/Bjerregaard_Johannes/Again_Its_JB.sid | 9.26 | filter (cutoff 152/s), sync, ring, pwm
+MUSICIANS/G/Gray_Matt/Phantom_Rock.sid | 9.16 | digi 3466/s, ring, pwm
+MUSICIANS/G/Gray_Matt/Serpent_Demo.sid | 9.09 | digi 3259/s, sync, pwm
+MUSICIANS/D/Daglish_Ben/Killer-Ring.sid | 9.01 | filter (cutoff 102/s), sync, ring, pwm
