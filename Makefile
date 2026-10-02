@@ -61,7 +61,50 @@ define require_hatari
 	fi
 endef
 
-.PHONY: all help host dsp check run clean tools ratetest-hatari dspprobe-hatari
+# --- reference model and reSID oracle (host tools) -------------------------
+
+HOST_CC ?= gcc
+HOST_CXX ?= g++
+PERL ?= perl
+PYTHON ?= python3
+REF_BUILD := build/ref
+RESID_DIR := third_party/resid
+RESID_GEN := $(REF_BUILD)/resid-gen
+RESID_SOURCES := sid.cc voice.cc wave.cc envelope.cc filter8580new.cc dac.cc \
+	extfilt.cc pot.cc version.cc
+RESID_TABLES := wave6581_PST wave6581_PS_ wave6581_P_T wave6581__ST \
+	wave8580_PST wave8580_PS_ wave8580_P_T wave8580__ST
+REF_EXE := $(if $(filter MINGW% MSYS% CYGWIN%,$(HOST_UNAME)),.exe,)
+
+.PHONY: all help host dsp check run clean tools ratetest-hatari dspprobe-hatari \
+	ref ref-gate
+
+ref: $(REF_BUILD)/ref_run$(REF_EXE) $(REF_BUILD)/oracle_resid$(REF_EXE)
+
+# reSID's siddefs.h.in is an autoconf template; fill it for a plain C++11 build.
+$(RESID_GEN)/siddefs.h: $(RESID_DIR)/siddefs.h.in
+	@mkdir -p $(RESID_GEN)
+	sed -e 's/@RESID_INLINING@/1/; s/@RESID_INLINE@/inline/' \
+		-e 's/@RESID_BRANCH_HINTS@/1/; s/@NEW_8580_FILTER@/1/' \
+		-e 's/@HAVE_BOOL@/1/; s/@HAVE_BUILTIN_EXPECT@/1/; s/@HAVE_LOG1P@/1/' $< > $@
+
+$(RESID_GEN)/%.h: $(RESID_DIR)/%.dat
+	@mkdir -p $(RESID_GEN)
+	$(PERL) $(RESID_DIR)/samp2src.pl $* $< $@
+
+$(REF_BUILD)/oracle_resid$(REF_EXE): tools/ref/oracle_resid.cc src/ref/sid_ref.h \
+		$(RESID_GEN)/siddefs.h $(addprefix $(RESID_GEN)/,$(addsuffix .h,$(RESID_TABLES)))
+	@mkdir -p $(REF_BUILD)
+	$(HOST_CXX) -O2 -static -std=gnu++11 -w -I$(RESID_GEN) -I$(RESID_DIR) -Isrc/ref \
+		-DVERSION='"1.0"' $(addprefix $(RESID_DIR)/,$(RESID_SOURCES)) $< -o $@
+
+$(REF_BUILD)/ref_run$(REF_EXE): tools/ref/ref_run.c src/ref/sid_ref.c src/ref/sid_ref.h
+	@mkdir -p $(REF_BUILD)
+	$(HOST_CC) -O2 -static -std=c99 -Wall -Wextra -Isrc/ref src/ref/sid_ref.c $< -o $@ -lm
+
+# Bit-exactness against reSID and band-limiting against the per-cycle chip.
+ref-gate: ref
+	$(PYTHON) tools/ref/voice_gate.py --build $(REF_BUILD) | tee $(REF_BUILD)/gate-results.txt
 
 all: host dsp
 

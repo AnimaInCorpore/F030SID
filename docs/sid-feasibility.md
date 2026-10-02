@@ -96,6 +96,15 @@ In-band alias power relative to the signal (dB, lower is better; full table in
 - Test frequencies are incommensurate with the codec rate on purpose: a first
   run with round numbers folded aliases onto harmonics and read -100 dB.
 
+**Update, from the reference model** (`src/ref/README.md`, measured on reSID's
+real DAC, envelope and the 20/21-cycle frame grid): the 8580 reproduces the
+figures above (saw -55.6/-44.7 dB at 441 Hz/3.8 kHz); the 6581 is 7-9 dB worse
+on saw and triangle because its non-linear DAC puts kinks in the ramp that an
+edge-only polyBLEP does not correct. The frame grid also jitters the sample
+instants by up to a cycle, and evaluating the phase at the true instant
+(one multiply per voice) is worth 5-18 dB; without it the figures above are
+not reached.
+
 Limits: noise and combined waveforms have no clean edges to correct, and
 sync resets are discontinuities whose position must be known to sub-frame
 accuracy (see Design implications). Not measured here: sync, ring
