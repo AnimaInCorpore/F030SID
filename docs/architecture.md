@@ -60,6 +60,13 @@ kernel.
 3. Hatari integration gates for boot, refill cadence and shutdown, plus the
    inherited `ratetest`/`dspprobe` hardware checks.
 
+## Prior art
+
+See [`scummvm-opl-hints.md`](scummvm-opl-hints.md) for what the ScummVM DSP
+AdLib emulator learned (output rate vs aliasing, block-rate control, host-side
+register decoding, SSI ring transport, gate methodology) and how it changes
+this plan.
+
 ## Roadmap
 
 1. Build and run the scaffold (`make check`, `make run`).

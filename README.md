@@ -63,6 +63,7 @@ Outputs land in `release/`: `f030sid.tos`, `f030sid.ttp`, `sid.lod`,
 - `src/dsp/stage2_loader.asm`: sparse embedded P-memory loader for when the kernel outgrows 512 words.
 - `src/m68k/ratetest.s`, `dspprobe.s` and their DSP counterparts: hardware validation.
 - `tools/`: DSP image generator, Hatari resolution, DSP build script.
-- `docs/`: architecture, SID register reference, DSP and Hatari timing notes.
+- `docs/`: architecture, SID register reference, DSP and Hatari timing notes,
+  and [hints from the ScummVM DSP AdLib emulator](docs/scummvm-opl-hints.md).
 - `tests/traces/`: future register-write fixtures for oracle comparison.
 - `third_party/`: pinned references (`f030dsp3d`; `resid` planned as the oracle).
