@@ -262,6 +262,16 @@ These refine `architecture.md` and `scummvm-opl-hints.md`:
   or more) put several writes per output frame through the event path.
 - **Licensing** of any reSID-derived tables (above).
 
+## Toolchain status
+
+The measuring loop now exists: `make profile-sid` assembles the DSP kernel (Motorola
+`asm56000` under DOSBox), boots it in the DSP-calibrated Hatari, and cycle-counts the
+code between two labels with Hatari's DSP profiler. Calibration check on the only code
+there is so far: the skeleton's 32-word register clear costs 36 instructions and 38.0
+instruction cycles, which is the hand count (setup, `rep` of 32 stores, `rts`; two cycles
+of loop setup). The cost figures in this document are still estimates until a real voice
+loop is profiled this way.
+
 ## Next steps
 
 1. Write the 24-bit integer C reference for one voice + envelope + filter

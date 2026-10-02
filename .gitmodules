@@ -1,3 +1,6 @@
 [submodule "third_party/resid"]
 	path = third_party/resid
 	url = https://github.com/libsidplayfp/resid.git
+[submodule "third_party/f030dsp3d"]
+	path = third_party/f030dsp3d
+	url = https://github.com/AnimaInCorpore/f030dsp3d.git

@@ -23,33 +23,50 @@ Scaffold only. What exists today:
   F030MXDRV, `ratetest.tos` (SSI rate) and `dspprobe.tos` (DSP bus probe),
   which are independent of the sound chip being emulated.
 
-Nothing here has been built yet: the scaffold was written on a host without
-`make`, DOSBox or a C compiler, so the first `make check` is the first test.
+The scaffold builds and runs: `make check smoke ratetest-hatari
+dspprobe-hatari profile-sid` passes on a Windows host with MSYS2, using the
+DSP-calibrated Hatari. Everything runs under Hatari only; nothing has been run
+on a physical Falcon.
 
 ## Build
 
 Dependencies:
 
 - Git, plus the `f030dsp3d` submodule (vasm/vlink sources, Motorola DSP
-  assembler, TOS 4.02 ROM, Hatari);
+  assembler, TOS 4.02 ROM). `third_party/resid` is only needed for the
+  reference-model targets;
 - Python 3, `make`, `tar`, `file`, `rg`, a C compiler (to build vasm/vlink);
-- DOSBox Staging or DOSBox for the DSP assembler;
-- Hatari for emulator targets, ideally the DSP-calibrated build described in
-  [`docs/hatari-timing.md`](docs/hatari-timing.md).
+- DOSBox Staging (or a DOSBox that accepts its flags) to run the DSP assembler;
+- Hatari for emulator targets, the DSP-calibrated build described in
+  [`docs/hatari-timing.md`](docs/hatari-timing.md). The Makefile looks for it
+  in a sibling `F030Arcade` checkout (`third_party/hatari/build*/src/`).
 
 ```sh
-git submodule add git@github.com:AnimaInCorpore/f030dsp3d.git third_party/f030dsp3d
-git submodule update --init --recursive
-make check
+git submodule update --init third_party/f030dsp3d     # not --recursive: Hatari's sources are not needed
+make check smoke
 ```
+
+Machine-specific paths go in `local.mk` (git-ignored), for example:
+
+```make
+DOSBOX := /c/Arbeit/F030Comanche/tools/toolchain/dosbox.exe
+PYTHON := /c/Users/me/AppData/Local/Microsoft/WindowsApps/python3
+# HATARI := /path/to/hatari       # override the calibrated-build search
+```
+
+On Windows run `make` from an MSYS2 login shell (`/c/msys64/usr/bin/bash.exe -lc`)
+with `/ucrt64/bin` on `PATH`; from a plain Git-bash some tools fail.
 
 | Target | Purpose | Extra input |
 | --- | --- | --- |
 | `make all` | build the Falcon executables and DSP image | DOSBox |
 | `make check` | build and verify assembler listings are clean | DOSBox |
-| `make run` | run `f030sid.tos` in Hatari | Hatari |
-| `make ratetest-hatari` | SSI rate test under Hatari | Hatari |
+| `make smoke` | boot `f030sid.tos` headless in Hatari, check the DSP handshake and register round trip | Hatari |
+| `make profile-sid` | cycle-count a DSP range between two labels (`PROFILE_START`, `PROFILE_END`) with Hatari's DSP profiler | Hatari |
+| `make ratetest-hatari` | SSI rate test under Hatari (prescales 3, 1, 2) | Hatari |
 | `make dspprobe-hatari` | DSP bus probe under Hatari | Hatari |
+| `make run` | run `f030sid.tos` in a Hatari window | Hatari |
+| `make ref-gate`, `make trace-test` | reference model and trace tool gates | see below |
 
 Outputs land in `release/`: `f030sid.tos`, `f030sid.ttp`, `sid.lod`,
 `ratetest.tos`, `dspprobe.tos`.

@@ -30,6 +30,9 @@ M68K_SOURCES := \
 	src/m68k/main.s
 M68K_OBJECTS := $(patsubst src/m68k/%.s,$(M68K_BUILD)/%.o,$(M68K_SOURCES))
 
+# Machine-specific paths (DOSBOX, HATARI, PYTHON, ...) go in local.mk, which git ignores.
+-include local.mk
+
 DOSBOX ?= $(shell command -v dosbox-staging 2>/dev/null || command -v dosbox 2>/dev/null)
 DOSBOX_FLAGS ?= --noprimaryconf --set output=texture
 
@@ -76,7 +79,7 @@ RESID_TABLES := wave6581_PST wave6581_PS_ wave6581_P_T wave6581__ST \
 	wave8580_PST wave8580_PS_ wave8580_P_T wave8580__ST
 REF_EXE := $(if $(filter MINGW% MSYS% CYGWIN%,$(HOST_UNAME)),.exe,)
 
-.PHONY: all help host dsp check run clean tools ratetest-hatari dspprobe-hatari \
+.PHONY: all help host dsp check run clean tools ratetest-hatari dspprobe-hatari smoke profile-sid \
 	ref ref-gate
 
 ref: $(REF_BUILD)/ref_run$(REF_EXE) $(REF_BUILD)/oracle_resid$(REF_EXE)
@@ -287,20 +290,73 @@ check: all
 	@rg -q "^DSPPROBE_BOOT_WORDS equ " $(DSPPROBE_BOOT_IMAGE)
 	@file $(RELEASE_DIR)/f030sid.tos $(RELEASE_DIR)/sid.lod
 
+# The two physical-Falcon validation programs, gated under Hatari. Under Hatari
+# they can only prove the programs' mechanics; run them on a real Falcon for
+# the hardware answer (RATETEST.TXT / DSPPROBE.TXT land beside the program).
 ratetest-hatari: $(RELEASE_DIR)/ratetest.tos
 	$(call require_hatari,ratetest-hatari)
-	cd $(RELEASE_DIR) && $(HATARI) --machine falcon --dsp emu --tos \
-		$(CURDIR)/third_party/f030dsp3d/tools/tos402.rom ratetest.tos
+	@mkdir -p build
+	@cd $(RELEASE_DIR) && $(HATARI_HEADLESS) --run-vbls 6000 --conout 2 \
+		ratetest.tos > $(CURDIR)/build/ratetest-hatari.out 2>&1
+	@cat build/ratetest-hatari.out
+	@rg -q "^RESULT: PASS" build/ratetest-hatari.out
 
 dspprobe-hatari: $(RELEASE_DIR)/dspprobe.tos
 	$(call require_hatari,dspprobe-hatari)
-	cd $(RELEASE_DIR) && $(HATARI) --machine falcon --dsp emu --tos \
-		$(CURDIR)/third_party/f030dsp3d/tools/tos402.rom dspprobe.tos
+	@mkdir -p build
+	@cd $(RELEASE_DIR) && $(HATARI_HEADLESS) --run-vbls 2500 --conout 2 \
+		dspprobe.tos > $(CURDIR)/build/dspprobe-hatari.out 2>&1
+	@cat build/dspprobe-hatari.out
+	@rg -q "^RESULT: PASS" build/dspprobe-hatari.out
 
 run: all
 	$(call require_hatari,run)
 	cd $(RELEASE_DIR) && $(HATARI) --machine falcon --dsp emu --tos \
 		$(CURDIR)/third_party/f030dsp3d/tools/tos402.rom f030sid.tos
+
+# Hatari without a window or sound; every target below runs a program for a
+# fixed number of VBLs and exits.
+HATARI_HEADLESS = SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy $(HATARI) \
+	--machine falcon --dsp emu \
+	--tos $(CURDIR)/third_party/f030dsp3d/tools/tos402.rom --patch-tos true \
+	--fast-boot true --fast-forward true --sound off --confirm-quit false
+
+# Boot f030sid.tos in Hatari and check the bring-up verdict it prints: the DSP
+# boots, answers the protocol, and the SID register shadow round-trips.
+smoke: all
+	$(call require_hatari,smoke)
+	@mkdir -p build
+	@cd $(RELEASE_DIR) && $(HATARI_HEADLESS) --run-vbls 800 --conout 2 \
+		--log-file $(CURDIR)/build/hatari-smoke.log \
+		--trace-file $(CURDIR)/build/hatari-smoke.trace \
+		--trace gemdos,dsp_host_interface,xbios \
+		f030sid.tos > $(CURDIR)/build/hatari-smoke.out 2>&1
+	@cat build/hatari-smoke.out
+	@rg -q "^PASS" build/hatari-smoke.out
+	@rg -q "XBIOS 0x6E Dsp_ExecBoot" build/hatari-smoke.trace
+	@rg -q "Direct Transfer 0x010000" build/hatari-smoke.trace
+	@rg -q "Transfer 0x534944" build/hatari-smoke.trace
+	@! rg -q "Illegal instruction|Modulo addressing result unpredictable" build/hatari-smoke.log
+	@echo "smoke: ok"
+
+# Cycle-count a DSP code range between two labels with Hatari's DSP profiler.
+# PROFILE_START/PROFILE_END name labels in src/dsp/sid.asm; the default range
+# is the register-file clear that runs when the DSP starts.
+PROFILE_START ?= sid_clear_regs
+PROFILE_END ?= sid_loop
+PROFILE_DIR := build/dsp-profile
+profile-sid: all
+	$(call require_hatari,profile-sid)
+	@rm -rf $(PROFILE_DIR)
+	@$(PYTHON) tools/profile_dsp.py prepare --listing $(DSP_BUILD)/SID.LST \
+		--output-dir $(PROFILE_DIR) --start $(PROFILE_START) --end $(PROFILE_END)
+	@cd $(RELEASE_DIR) && $(HATARI_HEADLESS) --run-vbls 800 \
+		--parse $(CURDIR)/$(PROFILE_DIR)/start.ini f030sid.tos \
+		> $(CURDIR)/$(PROFILE_DIR)/debug.log 2>&1 || { tail -n 60 $(CURDIR)/$(PROFILE_DIR)/debug.log >&2; exit 1; }
+	@test -s $(PROFILE_DIR)/profile.txt || { echo "error: Hatari captured no profile" >&2; \
+		tail -n 60 $(PROFILE_DIR)/debug.log >&2; exit 1; }
+	@$(PYTHON) tools/profile_dsp.py report --listing $(DSP_BUILD)/SID.LST \
+		--profile $(PROFILE_DIR)/profile.txt --output $(PROFILE_DIR)/report.txt
 
 clean:
 	rm -rf build
