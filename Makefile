@@ -22,7 +22,7 @@ DSP_BUILD := build/dsp
 GENERATED_BUILD := build/generated
 RELEASE_DIR := release
 
-SID_BOOT_IMAGE := $(GENERATED_BUILD)/sid_boot.i
+DSP_STAGE2_IMAGE := $(GENERATED_BUILD)/dsp_stage2_image.i
 RATETEST_BOOT_IMAGE := $(GENERATED_BUILD)/ratetest_boot.i
 DSPPROBE_BOOT_IMAGE := $(GENERATED_BUILD)/dspprobe_boot.i
 
@@ -80,7 +80,7 @@ RESID_TABLES := wave6581_PST wave6581_PS_ wave6581_P_T wave6581__ST \
 REF_EXE := $(if $(filter MINGW% MSYS% CYGWIN%,$(HOST_UNAME)),.exe,)
 
 .PHONY: all help host dsp check run clean tools ratetest-hatari dspprobe-hatari smoke profile-sid \
-	ref ref-gate
+	ref ref-gate dsp-gate
 
 ref: $(REF_BUILD)/ref_run$(REF_EXE) $(REF_BUILD)/oracle_resid$(REF_EXE)
 
@@ -108,6 +108,20 @@ $(REF_BUILD)/ref_run$(REF_EXE): tools/ref/ref_run.c src/ref/sid_ref.c src/ref/si
 # Bit-exactness against reSID and band-limiting against the per-cycle chip.
 ref-gate: ref
 	$(PYTHON) tools/ref/voice_gate.py --build $(REF_BUILD) | tee $(REF_BUILD)/gate-results.txt
+
+# The DSP kernel against the C reference, bit for bit, under Hatari: each trace
+# becomes a test vector, the m68k harness replays it through the kernel, and the
+# DSP's output words must equal the reference model's. DSP_GATE_ARGS=--quick runs
+# two traces; trace names after it select others.
+$(REF_BUILD)/make_vec$(REF_EXE): tools/dsp/make_vec.c src/ref/sid_ref.c src/ref/sid_ref.h
+	@mkdir -p $(REF_BUILD)
+	$(HOST_CC) -O2 -static -std=c99 -Wall -Wextra -Isrc/ref src/ref/sid_ref.c $< -o $@ -lm
+
+dsp-gate: all $(REF_BUILD)/make_vec$(REF_EXE)
+	$(call require_hatari,dsp-gate)
+	$(PYTHON) tools/dsp/voice_dsp_gate.py --build build --make-vec $(REF_BUILD)/make_vec$(REF_EXE) \
+		--vasm $(VASM)$(REF_EXE) --vlink $(VLINK)$(REF_EXE) --hatari $(HATARI) \
+		--tos third_party/f030dsp3d/tools/tos402.rom --vbls 6000 $(DSP_GATE_ARGS) | tee build/dsp-gate-results.txt
 
 # --- sidtrace: PSID -> cycle-stamped SID register trace ------------------------
 # Taps the register stream of libsidplayfp's own player. It derives from
@@ -194,10 +208,11 @@ $(VLINK): $(TOOLS_DIR)/.vlink-unpacked
 # --- DSP56001 -------------------------------------------------------------
 
 $(DSP_BUILD)/BUILD.BAT: tools/BUILD_DSP.BAT src/dsp/sid.asm src/dsp/protocol.inc \
-		src/dsp/ratetest.asm src/dsp/dspprobe.asm
+		src/dsp/stage2_loader.asm src/dsp/ratetest.asm src/dsp/dspprobe.asm
 	@mkdir -p $(DSP_BUILD)
 	cp tools/BUILD_DSP.BAT $(DSP_BUILD)/BUILD.BAT
 	cp src/dsp/sid.asm $(DSP_BUILD)/SID.ASM
+	cp src/dsp/stage2_loader.asm $(DSP_BUILD)/SIBOOT.ASM
 	cp src/dsp/protocol.inc $(DSP_BUILD)/
 	cp src/dsp/ratetest.asm $(DSP_BUILD)/RATETEST.ASM
 	cp src/dsp/dspprobe.asm $(DSP_BUILD)/DSPPROBE.ASM
@@ -213,6 +228,7 @@ $(DSP_BUILD)/.assembled: $(DSP_BUILD)/BUILD.BAT
 	@rm -f $(DSP_BUILD)/*.CLD $(DSP_BUILD)/*.LOD $(DSP_BUILD)/*.LST
 	"$(DOSBOX)" $(DOSBOX_FLAGS) "$(abspath $(DSP_BUILD)/BUILD.BAT)"
 	@test -s $(DSP_BUILD)/SID.LOD
+	@test -s $(DSP_BUILD)/SIBOOT.LOD
 	@test -s $(DSP_BUILD)/RATETEST.LOD
 	@test -s $(DSP_BUILD)/DSPPROBE.LOD
 	@touch $@
@@ -221,10 +237,12 @@ $(RELEASE_DIR)/sid.lod: $(DSP_BUILD)/.assembled
 	@mkdir -p $(RELEASE_DIR)
 	cp $(DSP_BUILD)/SID.LOD $@
 
-$(SID_BOOT_IMAGE): tools/generate_dsp_stage2.py $(DSP_BUILD)/.assembled
+# 512-word bootstrap plus the sparse program (internal P, then external P up to
+# P:$1400, where external Y tables begin to alias); see docs/dsp-kernel.md.
+$(DSP_STAGE2_IMAGE): tools/generate_dsp_stage2.py $(DSP_BUILD)/.assembled
 	@mkdir -p $(GENERATED_BUILD)
-	python3 tools/generate_dsp_stage2.py --standalone $(DSP_BUILD)/SID.LOD \
-		--prefix sid > $@
+	python3 tools/generate_dsp_stage2.py --bootstrap $(DSP_BUILD)/SIBOOT.LOD \
+		--program $(DSP_BUILD)/SID.LOD --program-limit 0x1400 > $@
 
 $(RATETEST_BOOT_IMAGE): tools/generate_dsp_stage2.py $(DSP_BUILD)/.assembled
 	@mkdir -p $(GENERATED_BUILD)
@@ -239,7 +257,7 @@ $(DSPPROBE_BOOT_IMAGE): tools/generate_dsp_stage2.py $(DSP_BUILD)/.assembled
 # --- 68030 ----------------------------------------------------------------
 
 $(M68K_BUILD)/main.o: src/m68k/main.s src/m68k/xbios.i src/m68k/verbose.i \
-		src/m68k/protocol.i $(SID_BOOT_IMAGE) $(VASM)
+		src/m68k/protocol.i $(DSP_STAGE2_IMAGE) $(VASM)
 	@mkdir -p $(M68K_BUILD)
 	$(VASM) $< -quiet -Felf -m68030 -Isrc/m68k -I$(GENERATED_BUILD) \
 		-o $@ -L $(M68K_BUILD)/main.lst
@@ -281,11 +299,12 @@ check: all
 	@test -s $(RELEASE_DIR)/ratetest.tos
 	@test -s $(RELEASE_DIR)/dspprobe.tos
 	@test -s $(RELEASE_DIR)/sid.lod
-	@for l in SID RATETEST DSPPROBE; do \
+	@for l in SID SIBOOT RATETEST DSPPROBE; do \
 		rg -q "^0 +Errors" $(DSP_BUILD)/$$l.LST && \
 		rg -q "^0 +Warnings" $(DSP_BUILD)/$$l.LST || { echo "error: $$l.LST not clean" >&2; exit 1; }; \
 	done
-	@rg -q "^SID_BOOT_WORDS equ " $(SID_BOOT_IMAGE)
+	@rg -q "^DSP_BOOT_WORDS equ " $(DSP_STAGE2_IMAGE)
+	@rg -q "^DSP_STAGE2_PROGRAM_WORDS equ " $(DSP_STAGE2_IMAGE)
 	@rg -q "^RATETEST_BOOT_WORDS equ " $(RATETEST_BOOT_IMAGE)
 	@rg -q "^DSPPROBE_BOOT_WORDS equ " $(DSPPROBE_BOOT_IMAGE)
 	@file $(RELEASE_DIR)/f030sid.tos $(RELEASE_DIR)/sid.lod

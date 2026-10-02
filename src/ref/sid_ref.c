@@ -154,6 +154,16 @@ int sid_tables_init(const char *dir)
     return 0;
 }
 
+const uint16_t *sid_tab_wave_dac(sid_model_t m) { return wave_dac[m]; }
+const uint16_t *sid_tab_env_dac(sid_model_t m) { return env_dac[m]; }
+const uint16_t *sid_tab_rate_period(void) { return rate_counter_period; }
+const uint8_t *sid_tab_sustain_level(void) { return sustain_level; }
+int32_t sid_wave_zero(sid_model_t m) { return wave_zero[m]; }
+int32_t sid_floating_ttl_start(sid_model_t m)
+{
+    return m == SID_MOS6581 ? FLOATING_OUTPUT_TTL_START_6581 : FLOATING_OUTPUT_TTL_START_8580;
+}
+
 /* -------------------------------------------------------------- envelope */
 
 static void env_set_exponential_counter(sid_voice_t *v)

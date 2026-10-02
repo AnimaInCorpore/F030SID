@@ -148,11 +148,39 @@ def tone(kind, f):
     return ev, 560000
 
 
+def dsp_trace(seed, cycles=500000):
+    """Voice 0 only, waveforms 0 (none), triangle, saw, pulse, the test bit,
+    every envelope/gate path: what the first DSP milestone implements."""
+    rnd = random.Random(1000 + seed)
+    ev = freq_writes(5, 0, rnd.randint(500, 40000)) + pw_writes(5, 0, rnd.randint(0, 0xFFF))
+    ev += [(6, 5, rnd.randint(0, 255)), (6, 6, rnd.randint(0, 255)), (20, 4, 0x41)]
+    t = 100
+    while t < cycles:
+        t += int(rnd.expovariate(1 / 4000.0)) + 1
+        k = rnd.random()
+        if k < 0.25:
+            ev += freq_writes(t, 0, int(2 ** rnd.uniform(4, 16)) & 0xFFFF)
+        elif k < 0.37:
+            ev += pw_writes(t, 0, rnd.randint(0, 0xFFF))
+        elif k < 0.67:
+            ctl = rnd.choice([0x00, 0x10, 0x20, 0x40]) | rnd.choice([0, 1, 1, 1])
+            if rnd.random() < 0.06:
+                ctl |= 0x08
+            ev.append((t, 4, ctl))
+        elif k < 0.84:
+            ev.append((t, 5, rnd.randint(0, 255)))
+        else:
+            ev.append((t, 6, rnd.randint(0, 255)))
+    return ev, cycles
+
+
 def main():
     os.makedirs(OUT, exist_ok=True)
     for seed in range(1, 9):
         ev, end = rand_trace(seed)
         save(f"rand_{seed}", ev, end)
+    for seed in range(1, 9):
+        save(f"dsp_{seed}", *dsp_trace(seed))
     save("adsr_bug", *adsr_bug())
     save("noise", *noise())
     save("sync_ring", *sync_ring())

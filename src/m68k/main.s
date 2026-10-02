@@ -15,8 +15,8 @@
         global  vb_string
         endc
 
-DSP_X_WORDS     equ     64
-DSP_Y_WORDS     equ     16
+DSP_X_WORDS     equ     8192
+DSP_Y_WORDS     equ     8192
 DSP_ABILITY     equ     3
 
         text
@@ -29,8 +29,15 @@ start:
         tst.l   d0
         bmi     reserve_failed
 
+        ; XBIOS boots at most 512 contiguous internal-P words: install the
+        ; stage-two loader there, then stream the sparse kernel to it. The
+        ; loader acknowledges once every section is resident and enters it.
         VB      vb_txt_execboot
-        Dsp_ExecBoot sid_boot_image,#SID_BOOT_WORDS,#DSP_ABILITY
+        Dsp_ExecBoot dsp_bootstrap_image,#DSP_BOOT_WORDS,#DSP_ABILITY
+        clr.l   dsp_stage2_reply
+        Dsp_BlkUnpacked dsp_program_image,#DSP_STAGE2_TRANSFER_WORDS,dsp_stage2_reply,#1
+        cmp.l   #DSP_STAGE2_REPLY_OK,dsp_stage2_reply
+        bne     fail
 
         Cconws  txt_ping
         move.w  #1,tx_count
@@ -125,12 +132,13 @@ vb_txt_execboot: dc.b   'Dsp_ExecBoot     ',0
 vb_crlf:        dc.b    13,10,0
         even
 
-        include "sid_boot.i"
+        include "dsp_stage2_image.i"
 
         bss
 
 tx_words:       ds.l 8
 rx_word:        ds.l 1
+dsp_stage2_reply: ds.l 1
 tx_count:       ds.w 1
 vb_hexbuf:      ds.b 10
 
