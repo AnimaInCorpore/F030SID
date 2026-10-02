@@ -1,0 +1,219 @@
+VASM_ARCHIVE := third_party/f030dsp3d/tools/vasm.tar.gz
+VLINK_ARCHIVE := third_party/f030dsp3d/tools/vlink.tar.gz
+DSP_TOOL_SOURCE := third_party/f030dsp3d/tools/asm56k
+RESID_SOURCE := third_party/resid
+
+TOOLS_DIR := build/tools
+VASM_DIR := $(TOOLS_DIR)/vasm
+VLINK_DIR := $(TOOLS_DIR)/vlink
+VASM := $(VASM_DIR)/vasmm68k_mot
+VLINK := $(VLINK_DIR)/vlink
+
+# vlink's vendored dir.c calls chmod() from its _WIN32 branch without a
+# declaration; GCC 14+ rejects that. gnu99 plus a forced io.h supplies it.
+# Only needed on Windows hosts.
+HOST_UNAME := $(shell uname -s)
+ifneq (,$(filter MINGW% MSYS% CYGWIN%,$(HOST_UNAME)))
+VLINK_MAKE_ARGS := COPTS="-std=gnu99 -O2 -fomit-frame-pointer -c -include io.h"
+endif
+
+M68K_BUILD := build/m68k
+DSP_BUILD := build/dsp
+GENERATED_BUILD := build/generated
+RELEASE_DIR := release
+
+SID_BOOT_IMAGE := $(GENERATED_BUILD)/sid_boot.i
+RATETEST_BOOT_IMAGE := $(GENERATED_BUILD)/ratetest_boot.i
+DSPPROBE_BOOT_IMAGE := $(GENERATED_BUILD)/dspprobe_boot.i
+
+M68K_SOURCES := \
+	src/m68k/main.s
+M68K_OBJECTS := $(patsubst src/m68k/%.s,$(M68K_BUILD)/%.o,$(M68K_SOURCES))
+
+DOSBOX ?= $(shell command -v dosbox-staging 2>/dev/null || command -v dosbox 2>/dev/null)
+DOSBOX_FLAGS ?= --noprimaryconf --set output=texture
+
+# Hatari selection. Stock Hatari runs the Falcon DSP at twice the hardware
+# clock, so real-time results need the DSP-calibrated build from the
+# F030Arcade tree; see docs/hatari-timing.md. Override either variable:
+#   make <target> F030ARCADE=/path/to/F030Arcade
+#   make <target> HATARI=/path/to/hatari
+# Keep the candidate search in step with tools/hatari_binary.py.
+F030ARCADE ?= $(HOME)/Work/F030Arcade
+HATARI_ROOTS := $(F030ARCADE) $(abspath $(CURDIR)/../F030Arcade)
+HATARI_CANDIDATES := $(foreach root,$(HATARI_ROOTS),$(foreach build,build build-ucrt64,\
+	$(root)/third_party/hatari/$(build)/src/hatari \
+	$(root)/third_party/hatari/$(build)/src/hatari.exe))
+HATARI_CALIBRATED := $(firstword $(wildcard $(HATARI_CANDIDATES)))
+HATARI ?= $(firstword $(HATARI_CALIBRATED) hatari)
+
+# Hatari splits the program argument into a GEMDOS directory and a filename
+# using the host's separator, so every target cd's into the program's own
+# directory and passes a bare filename.
+define require_hatari
+	@if ! command -v $(HATARI) >/dev/null 2>&1; then \
+		echo "error: $(1) target needs Hatari ($(HATARI))" >&2; \
+		exit 1; \
+	fi
+	@if [ "$(abspath $(HATARI))" != "$(abspath $(HATARI_CALIBRATED))" ]; then \
+		echo "warning: $(HATARI) is not the DSP-calibrated build; real-time" >&2; \
+		echo "         results will describe a 32 MIPS DSP - see docs/hatari-timing.md" >&2; \
+	fi
+endef
+
+.PHONY: all help host dsp check run clean tools ratetest-hatari dspprobe-hatari
+
+all: host dsp
+
+help:
+	@echo "Build targets:"
+	@echo "  all              build the Falcon executables and DSP image"
+	@echo "  check            build everything and validate the assembler listings"
+	@echo "  run              launch f030sid.tos in Hatari"
+	@echo "  ratetest-hatari  run the physical-Falcon SSI rate test under Hatari"
+	@echo "  dspprobe-hatari  run the physical-Falcon DSP bus probe under Hatari"
+	@echo "  clean            remove generated build/ and release/ directories"
+
+host: $(RELEASE_DIR)/f030sid.tos $(RELEASE_DIR)/f030sid.ttp \
+		$(RELEASE_DIR)/ratetest.tos $(RELEASE_DIR)/dspprobe.tos
+
+dsp: $(RELEASE_DIR)/sid.lod
+
+tools: $(VASM) $(VLINK)
+
+$(TOOLS_DIR)/.vasm-unpacked: $(VASM_ARCHIVE)
+	@mkdir -p $(TOOLS_DIR)
+	tar -xf $< -C $(TOOLS_DIR)
+	@touch $@
+
+$(VASM): $(TOOLS_DIR)/.vasm-unpacked
+	$(MAKE) -C $(VASM_DIR) CPU=m68k SYNTAX=mot
+
+$(TOOLS_DIR)/.vlink-unpacked: $(VLINK_ARCHIVE)
+	@mkdir -p $(TOOLS_DIR)
+	tar -xf $< -C $(TOOLS_DIR)
+	@touch $@
+
+$(VLINK): $(TOOLS_DIR)/.vlink-unpacked
+	$(MAKE) -C $(VLINK_DIR) $(VLINK_MAKE_ARGS)
+
+# --- DSP56001 -------------------------------------------------------------
+
+$(DSP_BUILD)/BUILD.BAT: tools/BUILD_DSP.BAT src/dsp/sid.asm src/dsp/protocol.inc \
+		src/dsp/ratetest.asm src/dsp/dspprobe.asm
+	@mkdir -p $(DSP_BUILD)
+	cp tools/BUILD_DSP.BAT $(DSP_BUILD)/BUILD.BAT
+	cp src/dsp/sid.asm $(DSP_BUILD)/SID.ASM
+	cp src/dsp/protocol.inc $(DSP_BUILD)/
+	cp src/dsp/ratetest.asm $(DSP_BUILD)/RATETEST.ASM
+	cp src/dsp/dspprobe.asm $(DSP_BUILD)/DSPPROBE.ASM
+	cp $(DSP_TOOL_SOURCE)/ASM56000.EXE $(DSP_TOOL_SOURCE)/CLDLOD.EXE \
+		$(DSP_TOOL_SOURCE)/DOS4GW.EXE $(DSP_TOOL_SOURCE)/ioequ.inc $(DSP_BUILD)/
+	@touch $@
+
+$(DSP_BUILD)/.assembled: $(DSP_BUILD)/BUILD.BAT
+	@if [ -z "$(DOSBOX)" ]; then \
+		echo "error: DSP build needs dosbox-staging or dosbox" >&2; \
+		exit 1; \
+	fi
+	@rm -f $(DSP_BUILD)/*.CLD $(DSP_BUILD)/*.LOD $(DSP_BUILD)/*.LST
+	"$(DOSBOX)" $(DOSBOX_FLAGS) "$(abspath $(DSP_BUILD)/BUILD.BAT)"
+	@test -s $(DSP_BUILD)/SID.LOD
+	@test -s $(DSP_BUILD)/RATETEST.LOD
+	@test -s $(DSP_BUILD)/DSPPROBE.LOD
+	@touch $@
+
+$(RELEASE_DIR)/sid.lod: $(DSP_BUILD)/.assembled
+	@mkdir -p $(RELEASE_DIR)
+	cp $(DSP_BUILD)/SID.LOD $@
+
+$(SID_BOOT_IMAGE): tools/generate_dsp_stage2.py $(DSP_BUILD)/.assembled
+	@mkdir -p $(GENERATED_BUILD)
+	python3 tools/generate_dsp_stage2.py --standalone $(DSP_BUILD)/SID.LOD \
+		--prefix sid > $@
+
+$(RATETEST_BOOT_IMAGE): tools/generate_dsp_stage2.py $(DSP_BUILD)/.assembled
+	@mkdir -p $(GENERATED_BUILD)
+	python3 tools/generate_dsp_stage2.py --standalone $(DSP_BUILD)/RATETEST.LOD \
+		--prefix ratetest > $@
+
+$(DSPPROBE_BOOT_IMAGE): tools/generate_dsp_stage2.py $(DSP_BUILD)/.assembled
+	@mkdir -p $(GENERATED_BUILD)
+	python3 tools/generate_dsp_stage2.py --standalone $(DSP_BUILD)/DSPPROBE.LOD \
+		--prefix dspprobe > $@
+
+# --- 68030 ----------------------------------------------------------------
+
+$(M68K_BUILD)/main.o: src/m68k/main.s src/m68k/xbios.i src/m68k/verbose.i \
+		src/m68k/protocol.i $(SID_BOOT_IMAGE) $(VASM)
+	@mkdir -p $(M68K_BUILD)
+	$(VASM) $< -quiet -Felf -m68030 -Isrc/m68k -I$(GENERATED_BUILD) \
+		-o $@ -L $(M68K_BUILD)/main.lst
+
+$(M68K_BUILD)/ratetest.o: src/m68k/ratetest.s src/m68k/xbios.i \
+		$(RATETEST_BOOT_IMAGE) $(VASM)
+	@mkdir -p $(M68K_BUILD)
+	$(VASM) $< -quiet -Felf -m68030 -Isrc/m68k -I$(GENERATED_BUILD) \
+		-o $@ -L $(M68K_BUILD)/ratetest.lst
+
+$(M68K_BUILD)/dspprobe.o: src/m68k/dspprobe.s src/m68k/xbios.i \
+		$(DSPPROBE_BOOT_IMAGE) $(VASM)
+	@mkdir -p $(M68K_BUILD)
+	$(VASM) $< -quiet -Felf -m68030 -Isrc/m68k -I$(GENERATED_BUILD) \
+		-o $@ -L $(M68K_BUILD)/dspprobe.lst
+
+# No -tos-fastload: the loader must clear the TPA, since player state assumes
+# zero-initialized BSS.
+$(RELEASE_DIR)/f030sid.tos: $(M68K_OBJECTS) $(VLINK)
+	@mkdir -p $(RELEASE_DIR)
+	$(VLINK) $(M68K_OBJECTS) -b ataritos -s -e start -o $@
+
+$(RELEASE_DIR)/f030sid.ttp: $(RELEASE_DIR)/f030sid.tos
+	cp $< $@
+
+$(RELEASE_DIR)/ratetest.tos: $(M68K_BUILD)/ratetest.o $(VLINK)
+	@mkdir -p $(RELEASE_DIR)
+	$(VLINK) $< -b ataritos -s -e start -o $@
+
+$(RELEASE_DIR)/dspprobe.tos: $(M68K_BUILD)/dspprobe.o $(VLINK)
+	@mkdir -p $(RELEASE_DIR)
+	$(VLINK) $< -b ataritos -s -e start -o $@
+
+# --- gates ----------------------------------------------------------------
+
+check: all
+	@test -s $(RELEASE_DIR)/f030sid.tos
+	@test -s $(RELEASE_DIR)/f030sid.ttp
+	@test -s $(RELEASE_DIR)/ratetest.tos
+	@test -s $(RELEASE_DIR)/dspprobe.tos
+	@test -s $(RELEASE_DIR)/sid.lod
+	@for l in SID RATETEST DSPPROBE; do \
+		rg -q "^0 +Errors" $(DSP_BUILD)/$$l.LST && \
+		rg -q "^0 +Warnings" $(DSP_BUILD)/$$l.LST || { echo "error: $$l.LST not clean" >&2; exit 1; }; \
+	done
+	@rg -q "^SID_BOOT_WORDS equ " $(SID_BOOT_IMAGE)
+	@rg -q "^RATETEST_BOOT_WORDS equ " $(RATETEST_BOOT_IMAGE)
+	@rg -q "^DSPPROBE_BOOT_WORDS equ " $(DSPPROBE_BOOT_IMAGE)
+	@file $(RELEASE_DIR)/f030sid.tos $(RELEASE_DIR)/sid.lod
+
+ratetest-hatari: $(RELEASE_DIR)/ratetest.tos
+	$(call require_hatari,ratetest-hatari)
+	cd $(RELEASE_DIR) && $(HATARI) --machine falcon --dsp emu --tos \
+		$(CURDIR)/third_party/f030dsp3d/tools/tos402.rom ratetest.tos
+
+dspprobe-hatari: $(RELEASE_DIR)/dspprobe.tos
+	$(call require_hatari,dspprobe-hatari)
+	cd $(RELEASE_DIR) && $(HATARI) --machine falcon --dsp emu --tos \
+		$(CURDIR)/third_party/f030dsp3d/tools/tos402.rom dspprobe.tos
+
+run: all
+	$(call require_hatari,run)
+	cd $(RELEASE_DIR) && $(HATARI) --machine falcon --dsp emu --tos \
+		$(CURDIR)/third_party/f030dsp3d/tools/tos402.rom f030sid.tos
+
+clean:
+	rm -rf build
+	rm -f $(RELEASE_DIR)/f030sid.tos $(RELEASE_DIR)/f030sid.ttp \
+		$(RELEASE_DIR)/ratetest.tos $(RELEASE_DIR)/dspprobe.tos \
+		$(RELEASE_DIR)/sid.lod
+	@rmdir $(RELEASE_DIR) 2>/dev/null || true
