@@ -124,7 +124,7 @@ int main(int argc, char **argv)
             }
             sid_ref_frame(&s, &fr);
             c += fr.n;
-            fprintf(expf, "%d\n", fr.naive[0]);
+            fprintf(expf, "%d %d %d\n", fr.naive[0], fr.naive[1], fr.naive[2]);
             nframes++;
         }
         fprintf(vec, "vec_frames equ %ld\n", nframes);

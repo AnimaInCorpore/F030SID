@@ -1,11 +1,11 @@
 # DSP kernel
 
-`src/dsp/sid.asm` is the DSP56001 implementation of the SID, written
-milestone by milestone against the C reference model (`src/ref/`, see
+`src/dsp/sid.asm.in` is the DSP56001 implementation of the SID (a template, see
+[Source layout](#source-layout)), written milestone by milestone against the C reference model (`src/ref/`, see
 `src/ref/README.md`). Every milestone is gated bit for bit: the reference model
 and the DSP must return identical words for the same register trace.
 
-## Milestones 1 and 2 (done): voice 0, exact
+## Milestones 1-3 (done): all three voices, exact
 
 What runs on the DSP, frame by frame on request (`DSP_CMD_FRAME`):
 
@@ -34,9 +34,36 @@ Milestone 2 added the rest of the oscillator for voice 0:
 - ring modulation, against an idle voice 3 (its phase never changes, so it is a
   constant until voices 2 and 3 exist).
 
-Not yet: sync, voices 2 and 3, the filter, band-limiting (polyBLEP and the
-sample-instant phase), the SSI stream. Writes to those registers are accepted
-and ignored.
+Milestone 3 made it three voices and added the interaction between them:
+
+- the whole voice (phase, noise, envelope, registers) exists three times; each
+  voice is hard-synced and ring-modulated by the one before it (voice 3 -> 1,
+  1 -> 2, 2 -> 3), so ring modulation now reads a live phase;
+- the oscillators are clocked in steps split at every msb toggle of a source
+  whose destination has sync set, exactly as reSID's `SID::clock(delta_t)` does,
+  and `synchronize` restarts the destination's phase on the cycle the source's
+  msb rises, with reSID's rule for a voice that is both synced and a source;
+- the split needs the cycles to the next toggle, `ceil(delta / freq)`. The
+  DSP56001 has no divide worth using, but the answer only matters when it is
+  below the cycles left in the frame, which is exactly `delta <= freq * (left - 1)`;
+  the kernel tests that with one multiply and finds the count by a search of at
+  most 20 additions, only when a toggle really is that near;
+- the frame returns the three voice outputs.
+
+Not yet: the filter and mixer (registers $15-$18 are accepted and ignored),
+band-limiting (polyBLEP and the sample-instant phase), the SSI stream.
+
+### Source layout
+
+The DSP56001 has no register-plus-immediate-offset addressing: working on "the
+current voice" through a pointer would cost a set-up, a pipeline nop and an
+indexed move per variable. So the per-voice code is written once, in
+`sid.asm.in` between `;@voice` and `;@endvoice`, and `tools/dsp/gen_sid_asm.py`
+instantiates it three times with absolute addresses. In a voice section `S_X` is
+this voice's variable, `SRC_X` the voice that syncs and ring-modulates it, `DST_X`
+the voice it syncs, and every label gets a `_0/_1/_2` suffix. The generated
+`build/dsp/SID.ASM` is 3,000+ lines; the kernel is 3,747 words (to P:$0ea3),
+still under the P:$1400 limit above which external Y begins.
 
 ### Gate
 
@@ -55,7 +82,12 @@ make dsp-gate DSP_GATE_ARGS=--quick # two traces, one model
    frames over the host port, and saves the output words to `VOICEOUT.BIN`;
 3. the words are compared with the expected output. One differing word fails.
 
-Supported traces: `dsp2_1..10` (random voice 0 traffic over all 16 waveform
+The milestone 3 traces are `rand_1..8` (every register of every voice at random:
+all waveforms, test, sync, ring, gate and envelope traffic, the cross-voice
+interactions) and `sync_ring`; all three voices' outputs are compared, so the
+idle voices' constant outputs and the sync and ring effects are checked too.
+Reversing the msb test in `synchronize` fails `sync_ring` at frame 1. Earlier sets:
+`dsp2_1..10` (random voice 0 traffic over all 16 waveform
 settings with test, ring and sync bits, gate toggles, AD/SR changes under a
 running envelope), `noise` (every noise rate, test-bit resets, noise+triangle),
 `dsp_1..8` (the milestone 1 set: no noise or combinations), `adsr_bug`, and the
@@ -86,31 +118,31 @@ register cleared (zero wait states on external memory).
 | P | $0000 | `jmp start` (reset vector) |
 | P | $0040-$007f | stage-two loader (reserved) |
 | P | $0080- | kernel; spills into external P above $01ff |
-| X internal | $00-$1f | voice, envelope and frame state (`S_*` in sid.asm) |
-| X internal | $40-$4f | rate counter periods (host-loaded) |
-| X internal | $50-$5f | sustain levels (host-loaded) |
-| X internal | $60-$7f | register shadow for `READ_REG` |
+| X internal | $00-$0f | frame globals and configuration (`G_*`) |
+| X internal | $10-$87 | the three voice blocks, 40 words each (`V0_*`, `V1_*`, `V2_*`) |
+| X internal | $88-$97 | rate counter periods (host-loaded) |
+| X internal | $98-$a7 | sustain levels (host-loaded) |
+| X internal | $a8-$c7 | register shadow for `READ_REG` |
 | X external | $0200-$02ff | envelope DAC (host-loaded) |
 | X external | $0400-$13ff | waveform DAC (host-loaded) |
 | X external | $1400-$23ff, $2400-$33ff | combined waveform tables 6, 7 (host-loaded) |
 | Y external | $1400-$23ff, $2400-$33ff | combined waveform tables 3, 5 (host-loaded) |
 
-External P aliases external Y (docs/dsp56001-notes.md): the kernel (1,237 words,
-to P:$04d5) stays below P:$1400 and the Y tables sit above it. The Hatari gate
-exercises this aliasing.
+External P aliases external Y (docs/dsp56001-notes.md): the kernel stays below
+P:$1400 and the Y tables sit above it. The Hatari gate exercises this aliasing.
 
 ## Protocol (v2)
 
 `src/dsp/protocol.inc`: every command is a burst of 24-bit host words and gets
 exactly one reply word. `PING`, `WRITE_REG reg,value`, `READ_REG reg`, `RESET`,
 `LOAD_X addr,count,words...`, `LOAD_Y addr,count,words...`,
-`CONFIG zero,ttl,model,shift_reset_start`, `FRAME` (reply: the voice 0 output as
-a 24-bit two's-complement word).
+`CONFIG zero,ttl,model,shift_reset_start`, `FRAME` (three reply words: the
+voice 1, 2 and 3 outputs, each a 24-bit two's-complement word). The one-reply
+rule of the earlier versions holds for every other command.
 
 ## Next
 
 1. Cycle cost of the frame path in the calibrated Hatari (`make profile-voice`).
-2. Sync, voices 2 and 3 (and ring modulation against a live voice 3): these
-   extend the gate to the full three-voice random traces and the filter inputs.
+2. The filter, external filter and mixer (C reference first, as for the voices).
 3. Band-limited output (sample-instant phase, polyBLEP-4), then the filter.
 4. The SSI stream and the player (PSID loader, 6502 core, timestamped writes).

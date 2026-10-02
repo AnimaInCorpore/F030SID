@@ -2,7 +2,7 @@
 ;
 ; Boots the DSP kernel, loads its tables, replays the register writes of one
 ; test vector (build/gate/voicetest_vec.i, written by tools/dsp/make_vec) one
-; codec frame at a time, and writes the DSP's voice 0 output of every frame to
+; codec frame at a time, and writes the DSP's three voice outputs of every frame to
 ; VOICEOUT.BIN as big-endian 32-bit signed integers. tools/dsp/voice_dsp_gate.py compares
 ; that file with the C reference model's output.
 ;
@@ -74,7 +74,7 @@ start:
         tst.l   d0
         bmi     fail
         move.w  d0,out_handle
-        Fwrite  out_handle,#vec_frames*4,outbuf
+        Fwrite  out_handle,#vec_frames*12,outbuf
         Fclose  out_handle
         Cconws  done
         bra.s   exit
@@ -131,10 +131,13 @@ ev_loop:
 ev_done:
         move.l  #DSP_CMD_FRAME,d0
         bsr     dsp_put
+        moveq   #2,d6                   ; the three voice outputs
+frame_out:
         bsr     dsp_get
         lsl.l   #8,d0                   ; sign-extend the 24-bit word
         asr.l   #8,d0
         move.l  d0,(a1)+
+        dbra    d6,frame_out
         addq.l  #1,d4
         cmp.l   d5,d4
         ble.s   frame_loop
@@ -177,6 +180,6 @@ out_name:       dc.b    'VOICEOUT.BIN',0
 
 dsp_stage2_reply: ds.l 1
 out_handle:     ds.w 1
-outbuf:         ds.l MAX_FRAMES
+outbuf:         ds.l MAX_FRAMES*3
 
         end

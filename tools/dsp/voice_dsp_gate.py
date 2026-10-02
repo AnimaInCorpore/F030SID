@@ -2,7 +2,7 @@
 """Gate the DSP kernel against the C reference model, bit for bit.
 
 For every trace and chip model: make_vec turns the trace into a test vector
-and the reference model's expected voice 0 output; the m68k harness
+and the reference model's expected three-voice output; the m68k harness
 (src/m68k/voicetest.s) is assembled with that vector, run under Hatari, and
 feeds the DSP kernel the same register writes frame by frame; the 24-bit
 words the DSP returns (VOICEOUT.BIN) must equal the expected output exactly.
@@ -26,7 +26,10 @@ TRACES = os.path.join(ROOT, "tests", "traces")
 # Milestone 1: voice 0, waveforms none/triangle/saw/pulse, test bit, ADSR.
 # Milestone 2: every waveform setting incl. noise and the combined waveforms
 # (dsp2_*, noise), ring bit with an idle voice 3.
-SUPPORTED = ([f"dsp2_{i}" for i in range(1, 11)] + ["noise"] +
+# Milestone 3: all three voices with hard sync and ring modulation between them
+# (rand_*: every register of every voice at random; sync_ring).
+SUPPORTED = ([f"rand_{i}" for i in range(1, 9)] + ["sync_ring"] +
+             [f"dsp2_{i}" for i in range(1, 11)] + ["noise"] +
              [f"dsp_{i}" for i in range(1, 9)] + ["adsr_bug"] +
              [f"tone_{k}_{f}" for k in ("saw", "pulse", "tri")
               for f in (1873, 7509, 17250, 34190, 64720)])
@@ -72,13 +75,14 @@ def one(args, name, model):
     raw = open(out, "rb").read()
     got = list(struct.unpack(f">{len(raw) // 4}i", raw))
     if len(got) != len(want):
-        return f"{len(got)} frames, expected {len(want)}", len(want), None
+        return f"{len(got)} words, expected {len(want)}", len(want) // 3, None
     bad = [i for i in range(len(want)) if got[i] != want[i]]
+    frames = len(want) // 3
     if bad:
         i = bad[0]
-        return (f"{len(bad)} of {len(want)} frames differ; first at frame {i + 1}: "
-                f"DSP {got[i]} expected {want[i]}"), len(want), bad
-    return None, len(want), []
+        return (f"{len(bad)} of {len(want)} words differ; first at frame {i // 3 + 1} voice {i % 3 + 1}: "
+                f"DSP {got[i]} expected {want[i]}"), frames, bad
+    return None, frames, []
 
 
 def main():

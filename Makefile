@@ -207,11 +207,11 @@ $(VLINK): $(TOOLS_DIR)/.vlink-unpacked
 
 # --- DSP56001 -------------------------------------------------------------
 
-$(DSP_BUILD)/BUILD.BAT: tools/BUILD_DSP.BAT src/dsp/sid.asm src/dsp/protocol.inc \
+$(DSP_BUILD)/BUILD.BAT: tools/BUILD_DSP.BAT src/dsp/sid.asm.in tools/dsp/gen_sid_asm.py src/dsp/protocol.inc \
 		src/dsp/stage2_loader.asm src/dsp/ratetest.asm src/dsp/dspprobe.asm
 	@mkdir -p $(DSP_BUILD)
 	cp tools/BUILD_DSP.BAT $(DSP_BUILD)/BUILD.BAT
-	cp src/dsp/sid.asm $(DSP_BUILD)/SID.ASM
+	python3 tools/dsp/gen_sid_asm.py src/dsp/sid.asm.in $(DSP_BUILD)/SID.ASM
 	cp src/dsp/stage2_loader.asm $(DSP_BUILD)/SIBOOT.ASM
 	cp src/dsp/protocol.inc $(DSP_BUILD)/
 	cp src/dsp/ratetest.asm $(DSP_BUILD)/RATETEST.ASM
