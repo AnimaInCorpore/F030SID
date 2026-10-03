@@ -708,22 +708,22 @@ static int32_t voice_output_bl(const sid_ref_t *s, const sid_voice_t *v, const s
  */
 #define MIX_K23_6581      3491          /* voice units * volume -> 16-bit chip scale, Q23 */
 #define MIX_K23_8580      1586
-#define FILTER_GAIN_6581  1456640       /* filter path gain against a voice routed past it, Q21 */
-#define FILTER_GAIN_8580  2152960
+#define FILTER_GAIN_6581  2913280       /* filter path gain against a voice routed past it, Q22 */
+#define FILTER_GAIN_8580  4305920
 #define HP_CANCEL_6581    7936000       /* how completely the low-pass term cancels the input, Q23 */
 #define HP_CANCEL_8580    8388607
 #define EXT_LP_W          5182881       /* external 15.9 kHz low-pass, g/(1+g), Q23 */
 #define EXT_HP_W          8522          /* external 15.9 Hz high-pass */
 
 static const int32_t mix_k23[2]      = { MIX_K23_6581, MIX_K23_8580 };
-static const int32_t filter_gain21[2] = { FILTER_GAIN_6581, FILTER_GAIN_8580 };
+static const int32_t filter_gain22[2] = { FILTER_GAIN_6581, FILTER_GAIN_8580 };
 static const int32_t hp_cancel23[2]  = { HP_CANCEL_6581, HP_CANCEL_8580 };
 
 void sid_mix_config(sid_model_t model, int32_t *hp_cancel, int32_t *mix_k, int32_t *filter_gain)
 {
     *hp_cancel = hp_cancel23[model];
     *mix_k = mix_k23[model];
-    *filter_gain = filter_gain21[model];
+    *filter_gain = filter_gain22[model];
 }
 
 /* MPY / MAC product of two 24-bit words, fractional mode. */
@@ -814,6 +814,7 @@ static int32_t mix_output(const sid_ref_t *s, sid_filter_state_t *st, const int3
         else if (!(i == 2 && (f->mode & 8))) direct += vo[i];       /* voice 3 off */
     }
     x = xs >> 2;                                    /* headroom for the resonance peak */
+    if (!(f->filt & 7)) st->s1 = st->s2 = 0;        /* nothing routed: the integrators are idle (the DSP skips them) */
 
     /* TPT state-variable filter (Zavalishin), states Q24. */
     xa = (int64_t)x << 24;
@@ -835,7 +836,7 @@ static int32_t mix_output(const sid_ref_t *s, sid_filter_state_t *st, const int3
     if (f->mode & 4) acc += (int64_t)hph << 24;
     t = lim(acc);
 
-    acc = ((int64_t)direct << 24) + 16 * mpy(filter_gain21[s->model], t);
+    acc = ((int64_t)direct << 24) + 8 * mpy(filter_gain22[s->model], t);
     mixed = lim(acc);
 
     acc = mpy(mixed, (int32_t)f->vol * mix_k23[s->model]);            /* Q24, 16-bit chip scale */

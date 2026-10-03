@@ -23,7 +23,7 @@ int main(int argc, char **argv)
     long long c = 0, n = 0;
     const double glp = 5182881 / 8388608.0, ghp = 8522 / 8388608.0;
     const double mixk[2] = { 3491 / 8388608.0, 1586 / 8388608.0 };
-    const double fg[2] = { 1456640 / 2097152.0, 2152960 / 2097152.0 };
+    const double fg[2] = { 2913280 / 4194304.0, 4305920 / 4194304.0 };
     const double cancel[2] = { 7936000 / 8388608.0, 8388607 / 8388608.0 };
 
     if (argc < 5) return 2;

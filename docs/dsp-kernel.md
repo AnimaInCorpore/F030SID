@@ -73,12 +73,16 @@ The 68030 derivation of the coefficient words is `sid_filter_coeffs()` in
 multiplies at most; the harness takes the words from the vector for now (the
 m68k port of the routine is the next step).
 
-Cost of the filter path: `mix_frame` is 100 instructions; one call measured 130 DSP cycles
-(91 instructions executed) in Hatari's DSP profiler, 40% of the 326 cycles per codec
-frame at 49.17 kHz. That is well above the 30-60 estimated in sid-feasibility.md:
-long-address moves (two cycles), `L:` moves and the serial dependency of the TPT
-chain cost more than counted. Trimming it (short addresses, parallel moves, a skip
-for an idle filter) is the first optimisation item; the gate keeps it exact.
+Cost of the filter path: `mix_frame` measured 83 DSP cycles per codec frame
+with a voice routed through the filter (25% of the 326 cycles at 49.17 kHz), 29 of
+them the external filter and output stage; the first version, with branches for
+the routing and long-address moves, took 130. The savings come from: the routing
+as multiplies by weights held in Y memory (a branch costs more than a MAC), all
+coefficients, masks and states streamed through address registers with parallel
+moves (r3-r7 and n3/n4/n5/n7 are reserved and left balanced), and skipping the SVF
+when nothing is routed (the integrators are cleared then, in the reference too,
+so the skip is exact). Measured with `profile_dsp.py` on one call in the first
+frame of the gate vector, so it is a sample, not a worst case.
 
 Not yet on the DSP:
 band-limiting (polyBLEP and the sample-instant phase), the SSI stream.
@@ -166,7 +170,7 @@ P:$1400 and the Y tables sit above it. The Hatari gate exercises this aliasing.
 `src/dsp/protocol.inc`: every command is a burst of 24-bit host words and gets
 exactly one reply word. `PING`, `WRITE_REG reg,value`, `READ_REG reg`, `RESET`,
 `LOAD_X addr,count,words...`, `LOAD_Y addr,count,words...`,
-`CONFIG zero,ttl,model,shift_reset_start,hp_cancel,mix_k,filter_gain`,
+`CONFIG zero,ttl,model,shift_reset_start,hp_cancel,mix_k,filter_gain` (filter gain Q22),
 `FILTER a1,a2,a3,k4` (the TPT coefficient words for the current fc and res),
 `FRAME` (four reply words: the voice 1, 2 and 3 outputs and the chip output, each
 a 24-bit two's-complement word). The one-reply rule of the earlier versions holds
@@ -174,7 +178,7 @@ for every other command.
 
 ## Next
 
-0. Optimise `mix_frame` (130 cycles) and measure the voices' share of the frame budget.
+0. Measure the voices' share of the frame budget (profile a whole run, not one call).
 1. The 68030 side of the coefficients: `sid_filter_coeffs()` in m68k assembly, gated
    against the C routine, and the tables (about 16 KB per model) in the executable.
 2. Band-limited output (sample-instant phase, polyBLEP-4) in front of the mixer
