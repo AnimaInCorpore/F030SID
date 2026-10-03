@@ -178,18 +178,22 @@ for every other command.
 
 ## Next
 
-0. **The kernel is about 3.3 times over the real-time budget.** Profiling single frames from the
-   middle of the `filt_3` gate run (`profile_dsp.py prepare --start cmd_frame --end fr_done
-   --hit N`, frames 200 to 27,000) gives 887 to 1,222 DSP cycles per frame (mean about
-   1,070) against 326 at 49.17 kHz. `mix_frame` is 83 of that; the rest is the three voices
-   (envelope, oscillator clocking split at sync toggles, noise, combined waveforms, output
-   stage; the biggest single items are `wcore_noring` about 40 cycles per voice,
-   `wave_post`, `wk_shift_loop` and `sync_check`) plus 75 in `cmd_frame` itself. The
-   kernel is the exact model of the chip, built bit-exact first; it needs about a factor
-   three, from some mix of: skipping idle units (a silent voice or no-op envelope), a
-   fast path for the plain waveforms (triangle, saw, pulse with no sync, ring, test or
-   noise), keeping the noise register and combined tables lazy, and a lower codec rate
-   (32.8 kHz needs 488 cycles, 24.6 kHz 650). Each cut is gated against the reference.
+0. **The kernel is still about 2.2 times over the real-time budget** (was 3.3). Per codec frame
+   (`tools/dsp/profile_frames.py`, six frames sampled through a gate run): steady tone 706 cycles
+   (was 1,102), noise 714 (1,115), the random-register stress traces 920-1,130 (was 1,070-1,350);
+   the budget is 326 at 49.17 kHz. What was done, each step gated bit for bit:
+   - envelope: a frame with no rate step is a short counter update; a frame whose steps change
+     nothing (idle at the sustain level, or held at zero) is applied in closed form; the general
+     step loop skips the exponential-period lookup when the envelope value did not change;
+   - oscillator: the noise-register step test is a single predicate for the usual delta, the pulse
+     compare uses a stored `pw << 12` and a conditional transfer instead of a 12-bit shift and a branch;
+   - frame: when no voice has sync set, the sync search and bookkeeping and the split loop are skipped.
+   What is left (typical tone): oscillator clock and output stage about 75 + 70, the envelope
+   about 200 (an AD=0 test tone steps it two or three times a frame; ordinary envelopes less),
+   mixer and filter 76, pulse 40, frame bookkeeping 40. Next candidates: parallel moves through
+   per-voice pointer registers (the mixer went 130 -> 83 that way), the multiplier as a shifter
+   (`acc >> 12`), a computed jump for the waveform, a table for the noise bit gather, packed flags;
+   then, if it is still over, a lower codec rate (32.8 kHz needs 488 cycles, 24.6 kHz 650).
 1. The 68030 side of the coefficients: `sid_filter_coeffs()` in m68k assembly, gated
    against the C routine, and the tables (about 16 KB per model) in the executable.
 2. Band-limited output (sample-instant phase, polyBLEP-4) in front of the mixer

@@ -28,8 +28,8 @@ VARS = ["ACC", "FREQ", "PW", "PULSE", "WAVEFORM", "TEST", "WAVEOUT", "TTL",
         "RATECNT", "RATEPER", "EXPCNT", "EXPPER", "ENVCNT", "HOLD", "STATE",
         "NEXT", "PIPE", "ATTACK", "DECAY", "SUSTAIN", "RELEASE", "GATE", "SR",
         "SRRESET", "NOISE", "RING", "TMPC", "MSB", "SYNC", "DELTA", "SHIFTPER",
-        "TMPDT", "TMPSTEP", "TMPA", "TMPB", "OUT"]
-VSIZE = 40
+        "TMPDT", "TMPSTEP", "TMPA", "TMPB", "OUT", "PW12"]
+VSIZE = 41
 VBASE = 0x10
 
 LABEL_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*):", re.M)
