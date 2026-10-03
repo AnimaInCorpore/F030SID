@@ -51,11 +51,10 @@ F_CC            equ     $0c             ; high-pass cancellation (config)
 F_FG            equ     $0d             ; filter path gain, Q22 (config)
 F_VK            equ     $0e             ; volume * mixer scale
 F_LPW           equ     $0f             ; external low-pass coefficient
-; spare words of voice block 0 ($35-$38; the voice variables end at $34)
-T_X             equ     $35
-T_D             equ     $36
-T_OUT           equ     $37
-F_RT            equ     $38             ; bit 0: some voice is routed through the filter
+T_X             equ     $e5             ; frame temporaries
+T_D             equ     $e6
+T_OUT           equ     $e7
+F_RT            equ     $e8             ; bit 0: some voice is routed through the filter
 G_SYNCANY       equ     $e4             ; nonzero when some voice has its sync bit set
 F_FILT          equ     $c8             ; $17 low three bits: routing
 F_MODE          equ     $c9             ; $18 high nibble: LP BP HP voice-3-off
@@ -315,13 +314,13 @@ um_hpon: move   y0,y:(r0)+
 um_rt:  move    x1,a
         tst     a
         jne     um_routed
-        move    a1,x:<F_RT              ; nothing routed: the filter is skipped, its integrators idle at zero
+        move    a1,x:F_RT              ; nothing routed: the filter is skipped, its integrators idle at zero
         move    a,l:F_S1
         move    a,l:F_S2
         rts
 um_routed:
         move    #>1,x0
-        move    x0,x:<F_RT
+        move    x0,x:F_RT
         rts
 
 ; ------------------------------------------------------------------- helpers
@@ -350,9 +349,12 @@ reset_state:                            ; the model's power-on state
         move    #>S_SHADOW,r0
         rep     #32
         move    a,x:(r0)+
+        move    #$10,r0
+        rep     #66
+        move    a,y:(r0)+               ; the voices' cold variables (Y $10-$51)
         move    #>F_FILT,r0
-        rep     #$1d
-        move    a,x:(r0)+               ; filter variables and states ($c8-$e4)
+        rep     #$21
+        move    a,x:(r0)+               ; filter variables and states ($c8-$e8)
         move    #>F_S1,r0
         rep     #4
         move    a,y:(r0)+               ; the states' fractions
@@ -363,7 +365,7 @@ reset_state:                            ; the model's power-on state
         move    #>F_S1,r5
         move    #>F_XL,r6
         move    #>F_A1,r7
-        move    #>VSIZE,n3
+        move    #>HSIZE,n3
         move    #>5,n4
         move    #>1,n5
         move    #>5,n7
@@ -455,10 +457,12 @@ mix_frame:
         mac     x0,y1,b
         asl     a                               ; a1 = routed sum >> 2
         asl     b                               ; b1 = direct sum
-        move    b1,x:<T_D
+        move    b1,x:T_D
         move    #>V0_OUT,r3                     ; (balanced again for the next frame)
-        jclr    #0,x:<F_RT,mx_nofilt
-        move    a1,x:<T_X
+        move    x:F_RT,b
+        tst     b
+        jeq     mx_nofilt
+        move    a1,x:T_X
         move    a1,b                            ; b = x << 24
         move    x:(r5)+,y0                      ; s1h
         move    l:(r5),a                        ; s2
@@ -478,7 +482,7 @@ mix_frame:
         sub     x,a
         move    a,l:(r5)                        ; s1 = 2*v1 - s1
         move    x:(r7)+,x0                      ; hp = x - 4*k4*v1h - cc*v2h
-        mpy     x0,y0,a         x:<T_X,b
+        mpy     x0,y0,a         x:T_X,b
         asl     a
         asl     a
         sub     a,b             x:(r7)+,x0
@@ -497,7 +501,7 @@ mix_frame:
 mx_nofilt:
         clr     a                               ; idle: nothing routed
 mx_tail:
-        move    x:<T_D,b
+        move    x:T_D,b
         add     b,a                             ; direct + filtered
         move    a,x0                            ; mixed, limited
         move    x:<F_VK,y0
@@ -524,7 +528,7 @@ mx_tail:
         sub     x,a
         move    a,l:(r6)-                       ; xh = 2*y2 - xh
         rnd     b
-        move    b1,x:<T_OUT
+        move    b1,x:T_OUT
 mix_end:
         rts
 
@@ -675,6 +679,7 @@ wc_sync_done:
         move    #>1,x0
         move    x0,x:S_RING
 wc_ring_done:
+        jsr     set_handler
         move    x:S_TMPB,a
         tst     a
         jne     wc_test_was_on
@@ -751,6 +756,8 @@ wc_pipe:
         jmp     reply_ok
 
 reset_voice:                            ; the voice's power-on state (its block is already zero)
+        move    #>os_floating,x0
+        move    x0,x:S_WH
         move    #>$555555,x0
         move    x0,x:S_ACC
         move    #>$fff,x0
@@ -774,6 +781,47 @@ calc_pw12:
         rep     #12
         asl     a
         move    a1,x:S_PW12
+        rts
+
+; the waveform-code routine for the current waveform and ring bits
+set_handler:
+        move    x:S_WAVEFORM,a
+        tst     a
+        jeq     sh_float
+        move    #>1,x0
+        cmp     x0,a
+        jeq     sh_tri
+        move    #>2,x0
+        cmp     x0,a
+        jeq     sh_saw
+        move    #>4,x0
+        cmp     x0,a
+        jeq     sh_pulse
+        move    #>8,x0
+        cmp     x0,a
+        jeq     sh_noise
+sh_gen:
+        move    #>os_generic,x0
+        jmp     sh_store
+sh_float:
+        move    #>os_floating,x0
+        jmp     sh_store
+sh_tri:
+        move    x:S_RING,a
+        tst     a
+        jne     sh_gen                  ; ring modulated: the general path
+        move    #>os_tri,x0
+        jmp     sh_store
+sh_saw:
+        move    #>os_saw,x0
+        jmp     sh_store
+sh_pulse:
+        move    #>os_pulse,x0
+        jmp     sh_store
+sh_noise:
+        move    #>os_noise,x0
+sh_store:
+        move    x0,x:S_WH
         rts
 
 ; pulse_output = ((acc >> 12) >= pw) ? $fff : 0, i.e. acc >= pw << 12
@@ -1290,13 +1338,47 @@ sy_done:
         rts
 
 ; ---- waveform output at the frame's end, then
-; (wave DAC - zero) * envelope DAC into S_OUT
+; (wave DAC - zero) * envelope DAC into S_OUT. The routine that makes the
+; waveform code is chosen when the control register is written (S_WH): plain
+; triangle, saw, pulse and noise have their own short ones, everything else (no
+; waveform, combined waveforms, ring modulated triangle) the general path.
 outstage:
-        move    x:S_WAVEFORM,a
-        tst     a
-        jeq     os_floating
+        move    x:S_WH,r1
+        nop
+        jmp     (r1)
+os_generic:
         jsr     calc_wave_code
         jmp     os_output
+os_saw:                                 ; code = phase >> 12
+        move    x:S_ACC,x0
+        move    #>$800,y0
+        mpy     x0,y0,a                 ; (phase as a signed fraction * 2^11: a1 = phase >> 12, sign-extended)
+        move    #>$fff,x0
+        and     x0,a
+        jmp     os_have_code
+os_tri:                                 ; ((ix ^ (msb ? $7ff : 0)) & $7ff) << 1
+        move    x:S_ACC,x0
+        move    #>$800,y0
+        mpy     x0,y0,a
+        move    #>$fff,x0
+        and     x0,a
+        move    a1,x0
+        move    #>$7ff,y0
+        jclr    #11,x0,ost_nofold
+        eor     y0,a
+ost_nofold:
+        and     y0,a
+        lsl     a
+        jmp     os_have_code
+os_pulse:
+        move    x:S_PULSE,a
+        jmp     os_have_code
+os_noise:
+        move    y:S_NOISE,a
+os_have_code:
+        move    a1,x:S_WAVEOUT
+        move    a1,n1
+        jmp     os_dac
 os_floating:
         move    x:S_TTL,a
         tst     a
@@ -1310,6 +1392,7 @@ os_ttl_keep:
         move    a1,x:S_TTL
 os_output:
         move    x:S_WAVEOUT,n1
+os_dac:
         move    #>DSP_X_WAVE_DAC,r1
         nop
         move    x:(r1+n1),a

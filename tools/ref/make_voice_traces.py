@@ -8,6 +8,8 @@ Deterministic: running it again reproduces the committed files.
             combined waveforms, test, sync, ring, gate toggles, AD/SR changes
             including rate changes under a running envelope). These gate the
             reference bit-for-bit against reSID.
+  music_*   a tracker-style trace (arpeggio, PWM, vibrato, bass, drums, filter sweep)
+            with typical ADSR values: what a real tune costs per frame.
   filt_*    rand_* traffic plus random filter, resonance, routing, mode and volume
             writes; these gate the filter and mixer (DSP bit for bit, reSID by spectrum).
   adsr_bug  an envelope whose rate is lowered below the running counter
@@ -236,6 +238,58 @@ def filt_trace(seed, cycles=600000):
     return ev, cycles
 
 
+def music_trace(seed, filter_on, cycles=600000):
+    """A tracker-style trace: a 50 Hz tick (19,705 PAL cycles), arpeggiated pulse
+    lead with pulse-width modulation and vibrato, a saw bass, and a triangle/noise
+    drum voice, with typical ADSR values and gate on/off per note. With
+    filter_on, a low-pass sweep over the lead. A measure of what a real tune costs."""
+    rnd = random.Random(2000 + seed)
+    tick = 19705
+    ev = []
+    ad = [0x09, 0x08, 0x18, 0x29]
+    sr = [0xa8, 0x98, 0xc9, 0x69]
+    notes = [rnd.randint(2000, 14000) for _ in range(4)]
+    pw = [0x800, 0x400, 0x200]
+    ev += [(2, 5, rnd.choice(ad)), (2, 6, rnd.choice(sr)), (2, 12, 0x09), (2, 13, 0xa8),
+           (2, 19, 0x00), (2, 20, 0xa8)]
+    if filter_on:
+        ev += [(3, 23, 0x41), (3, 24, 0x1f)]
+    else:
+        ev += [(3, 24, 0x0f)]
+    for k in range(cycles // tick):
+        t = 10 + k * tick
+        # lead (voice 1): arpeggio every 2 ticks, gate off at the last tick of a note
+        if k % 2 == 0:
+            f = notes[(k // 2) % 4]
+            ev += [(t, 0, f & 255), (t, 1, f >> 8), (t + 1, 4, 0x41)]
+        if k % 8 == 7:
+            ev.append((t, 4, 0x40))
+        # pulse width modulation and vibrato
+        pw[0] = (pw[0] + 0x30) & 0xfff
+        ev += [(t + 30, 2, pw[0] & 255), (t + 30, 3, pw[0] >> 8)]
+        f = notes[(k // 2) % 4] + int(30 * ((k % 6) - 3))
+        ev += [(t + 60, 0, f & 255), (t + 60, 1, f >> 8)]
+        # bass (voice 2): a note every 4 ticks
+        if k % 4 == 0:
+            fb = notes[(k // 4) % 4] // 4
+            ev += [(t + 100, 7, fb & 255), (t + 100, 8, fb >> 8), (t + 101, 11, 0x21)]
+        if k % 4 == 3:
+            ev.append((t + 100, 11, 0x20))
+        # drums (voice 3): triangle kick then noise
+        if k % 4 == 0:
+            ev += [(t + 200, 14, 0x00), (t + 200, 15, 0x08), (t + 201, 18, 0x11)]
+        if k % 4 == 1:
+            ev += [(t + 200, 14, 0x00), (t + 200, 15, 0x30), (t + 201, 18, 0x81)]
+        if k % 4 == 2:
+            ev.append((t + 200, 18, 0x80))
+        if filter_on:
+            fc = int(60 + 900 * (0.5 + 0.5 * __import__("math").sin(k / 3.0)))
+            ev += [(t + 300, 21, fc & 7), (t + 300, 22, fc >> 3)]
+            if k % 16 == 0:
+                ev.append((t + 300, 23, (rnd.randint(2, 12) << 4) | rnd.choice([1, 1, 3, 4])))
+    return ev, cycles
+
+
 def main():
     os.makedirs(OUT, exist_ok=True)
     for seed in range(1, 9):
@@ -247,6 +301,8 @@ def main():
         save(f"dsp2_{seed}", *dsp2_trace(seed))
     for seed in range(1, 7):
         save(f"filt_{seed}", *filt_trace(seed))
+    save("music_1", *music_trace(1, False))
+    save("music_2", *music_trace(2, True))
     save("adsr_bug", *adsr_bug())
     save("noise", *noise())
     save("sync_ring", *sync_ring())

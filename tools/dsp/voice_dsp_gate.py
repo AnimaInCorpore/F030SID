@@ -32,7 +32,7 @@ TRACES = os.path.join(ROOT, "tests", "traces")
 # Milestone 4: the filter, mixer and external filter (filt_*: rand_* traffic plus the
 # registers $15-$18), the chip output compared as a fourth word per frame.
 # (rand_*: every register of every voice at random; sync_ring).
-SUPPORTED = ([f"filt_{i}" for i in range(1, 7)] + [f"rand_{i}" for i in range(1, 9)] + ["sync_ring"] +
+SUPPORTED = (["music_1", "music_2"] + [f"filt_{i}" for i in range(1, 7)] + [f"rand_{i}" for i in range(1, 9)] + ["sync_ring"] +
              [f"dsp2_{i}" for i in range(1, 11)] + ["noise"] +
              [f"dsp_{i}" for i in range(1, 9)] + ["adsr_bug"] +
              [f"tone_{k}_{f}" for k in ("saw", "pulse", "tri")
