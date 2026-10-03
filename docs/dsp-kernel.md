@@ -5,7 +5,7 @@
 `src/ref/README.md`). Every milestone is gated bit for bit: the reference model
 and the DSP must return identical words for the same register trace.
 
-## Milestones 1-3 (done): all three voices, exact
+## Milestones 1-4 (done): three voices, filter, mixer, exact
 
 What runs on the DSP, frame by frame on request (`DSP_CMD_FRAME`):
 
@@ -50,7 +50,37 @@ Milestone 3 made it three voices and added the interaction between them:
   most 20 additions, only when a toggle really is that near;
 - the frame returns the three voice outputs.
 
-Not yet on the DSP: the filter and mixer (registers $15-$18 are accepted and ignored; the C reference has them),
+Milestone 4 added the mixer, the state-variable filter and the external filter
+(registers $15-$18), bit for bit against the reference:
+
+- the routing (`$17`), voice 3 off, the LP/BP/HP bits and the volume (`$18`);
+- a TPT state-variable filter: coefficients `a1 a2 a3 k/4` are 24-bit words the
+  68030 derives and sends with `DSP_CMD_FILTER` whenever fc or res changes (so
+  the DSP never divides); states are 48-bit (X = integer part, Y = fraction, one
+  `L:` move each); the products use the integer part of the state, so each
+  multiplication is one MPY/MAC and the fraction is only carried in the
+  accumulate. The routed voices enter divided by four for the resonance
+  headroom (`x = sum >> 2`, +-2^22 against the 2^23 limit);
+- the high-pass term is `x - 4*(k/4)*bp - cc*lp`, `cc` the per-model leak;
+- mixer: direct voices plus the filter path times its per-model gain, times
+  `volume * scale` (computed on the DSP when `$18` is written), into the
+  external filter (15.9 kHz and 15.9 Hz one-pole TPT, 48-bit states), rounded
+  to the 16-bit chip scale; `FRAME` now returns that as a fourth word.
+
+The 68030 derivation of the coefficient words is `sid_filter_coeffs()` in
+`src/ref/sid_ref.c`: tables of `g`, `g*g` and `g*k0` per fc, `kr` per res, and a
+257-entry reciprocal table with linear interpolation, so no divide and two
+multiplies at most; the harness takes the words from the vector for now (the
+m68k port of the routine is the next step).
+
+Cost of the filter path: `mix_frame` is 100 instructions; one call measured 130 DSP cycles
+(91 instructions executed) in Hatari's DSP profiler, 40% of the 326 cycles per codec
+frame at 49.17 kHz. That is well above the 30-60 estimated in sid-feasibility.md:
+long-address moves (two cycles), `L:` moves and the serial dependency of the TPT
+chain cost more than counted. Trimming it (short addresses, parallel moves, a skip
+for an idle filter) is the first optimisation item; the gate keeps it exact.
+
+Not yet on the DSP:
 band-limiting (polyBLEP and the sample-instant phase), the SSI stream.
 
 ### Source layout
@@ -131,19 +161,24 @@ register cleared (zero wait states on external memory).
 External P aliases external Y (docs/dsp56001-notes.md): the kernel stays below
 P:$1400 and the Y tables sit above it. The Hatari gate exercises this aliasing.
 
-## Protocol (v2)
+## Protocol (v5)
 
 `src/dsp/protocol.inc`: every command is a burst of 24-bit host words and gets
 exactly one reply word. `PING`, `WRITE_REG reg,value`, `READ_REG reg`, `RESET`,
 `LOAD_X addr,count,words...`, `LOAD_Y addr,count,words...`,
-`CONFIG zero,ttl,model,shift_reset_start`, `FRAME` (three reply words: the
-voice 1, 2 and 3 outputs, each a 24-bit two's-complement word). The one-reply
-rule of the earlier versions holds for every other command.
+`CONFIG zero,ttl,model,shift_reset_start,hp_cancel,mix_k,filter_gain`,
+`FILTER a1,a2,a3,k4` (the TPT coefficient words for the current fc and res),
+`FRAME` (four reply words: the voice 1, 2 and 3 outputs and the chip output, each
+a 24-bit two's-complement word). The one-reply rule of the earlier versions holds
+for every other command.
 
 ## Next
 
-1. Cycle cost of the frame path in the calibrated Hatari (`make profile-voice`).
-2. The filter, external filter and mixer on the DSP. The C reference exists (`src/ref`, `make filter-gate`);
-   the 6581's HP/BP at high cutoff and its low-cutoff region are the open accuracy items.
-3. Band-limited output (sample-instant phase, polyBLEP-4), then the filter.
+0. Optimise `mix_frame` (130 cycles) and measure the voices' share of the frame budget.
+1. The 68030 side of the coefficients: `sid_filter_coeffs()` in m68k assembly, gated
+   against the C routine, and the tables (about 16 KB per model) in the executable.
+2. Band-limited output (sample-instant phase, polyBLEP-4) in front of the mixer
+   (the reference's `mix_bl` is the filter fed with it).
+3. Filter accuracy items against reSID: the 6581 below fc ~750 and its HP/BP at
+   high cutoff (`src/ref/README.md`).
 4. The SSI stream and the player (PSID loader, 6502 core, timestamped writes).

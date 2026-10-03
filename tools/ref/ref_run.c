@@ -86,7 +86,7 @@ int main(int argc, char **argv)
                     (unsigned)s.v[i].shift_register, (unsigned)s.v[i].envelope_counter,
                     (unsigned)s.v[i].rate_counter);
         fputc('\n', ex);
-        fprintf(bl, "%lld %u %d %d %d %d\n", k, (unsigned)fr.eps, fr.bl[0], fr.bl[1], fr.bl[2], fr.mix);
+        fprintf(bl, "%lld %u %d %d %d %d\n", k, (unsigned)fr.eps, fr.bl[0], fr.bl[1], fr.bl[2], fr.mix_bl);
     }
     fclose(ex);
     fclose(bl);

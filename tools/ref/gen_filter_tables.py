@@ -33,7 +33,14 @@ for model in ("6581", "8580"):
 out.append("static const uint32_t filter_g_q21[2][2048] = {\n")
 for g in gs:
     out.append("{\n" + ",".join(f"{v}" + ("\n" if i % 12 == 11 else "") for i, v in enumerate(g)) + "\n},\n")
-out.append("};\n\n/* k = 1/Q at res 0, per fc */\nstatic const uint32_t filter_k0_q21[2][2048] = {\n")
+out.append("};\n\n/* g*g and g*k0 per fc, Q21: the products that do not depend on res */\nstatic const uint32_t filter_g2_q21[2][2048] = {\n")
+for g_, in zip(gs):
+    out.append("{\n" + ",".join(f"{(v * v + (1 << 20)) >> 21}" + ("\n" if i % 12 == 11 else "") for i, v in enumerate(g_)) + "\n},\n")
+out.append("};\n\nstatic const uint32_t filter_gk0_q21[2][2048] = {\n")
+for g_, k0_ in zip(gs, k0s):
+    out.append("{\n" + ",".join(f"{(a * b + (1 << 20)) >> 21}" + ("\n" if i % 12 == 11 else "") for i, (a, b) in enumerate(zip(g_, k0_))) + "\n},\n")
+out.append("};\n\n/* 1/m for m = 1 + i/256, Q24 (257 entries, linear interpolation) */\nstatic const uint32_t filter_recip_q24[257] = {\n"
+           + ",".join(f"{int(round((1 << 24) / (1 + i / 256.0)))}" + ("\n" if i % 12 == 11 else "") for i in range(257)) + "\n};\n\n/* k = 1/Q at res 0, per fc */\nstatic const uint32_t filter_k0_q21[2][2048] = {\n")
 for g in k0s:
     out.append("{\n" + ",".join(f"{v}" + ("\n" if i % 12 == 11 else "") for i, v in enumerate(g)) + "\n},\n")
 out.append("};\n\n/* 1/Q ratio against res 0, per res (k = k0 * kr) */\nstatic const uint32_t filter_kr_q21[2][16] = {\n")

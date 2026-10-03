@@ -3,16 +3,18 @@
 ; Every exchange is a burst of 24-bit host words followed by exactly one
 ; reply word. Commands are listed with their trailing argument words.
 
-DSP_PROTOCOL_VERSION equ     4
+DSP_PROTOCOL_VERSION equ     5
 
 DSP_CMD_PING        equ     $010000     ; -> DSP_REPLY_HELLO
 DSP_CMD_WRITE_REG   equ     $020000     ; reg, value -> OK
 DSP_CMD_READ_REG    equ     $030000     ; reg -> shadow value / ERROR
 DSP_CMD_RESET       equ     $040000     ; -> OK (power-on state; tables are kept)
 DSP_CMD_LOAD_X      equ     $0a0000     ; address, count, count words -> OK
-DSP_CMD_CONFIG      equ     $0b0000     ; wave zero, floating TTL, model (0 = 6581), shift reset start -> OK
-DSP_CMD_FRAME       equ     $0c0000     ; -> three words: the voice 1, 2 and 3 outputs of the next codec frame
+DSP_CMD_CONFIG      equ     $0b0000     ; wave zero, floating TTL, model (0 = 6581), shift reset start,
+                                        ; high-pass cancellation, mixer scale, filter gain -> OK
+DSP_CMD_FRAME       equ     $0c0000     ; -> four words: the voice 1, 2 and 3 outputs and the chip output of the next codec frame
 DSP_CMD_LOAD_Y      equ     $0d0000     ; address, count, count words (Y memory) -> OK
+DSP_CMD_FILTER      equ     $0e0000     ; a1, a2, a3, k4 (Q23 coefficient words, host-derived) -> OK
 
 ; The SID register file: 25 write-only registers plus the 4 read-only ones,
 ; mirrored in a 32-word X-memory shadow indexed by the SID address.

@@ -40,6 +40,32 @@ G_DTMIN         equ     $07             ; cycles of the current oscillator step
 
 ;@equates
 
+; Filter, mixer and external filter (see src/ref/sid_ref.c, the executable spec).
+; Hot values sit in the short-addressed area (jset/jclr and one-cycle moves).
+F_A1            equ     $08             ; TPT coefficients, Q23 words (host-derived)
+F_A2            equ     $09
+F_A3            equ     $0a
+F_K4            equ     $0b             ; k = 1/Q divided by 4
+F_CC            equ     $0c             ; high-pass cancellation (config)
+F_FG            equ     $0d             ; filter path gain, Q21 (config)
+F_FILT          equ     $0e             ; $17 low nibble: routing
+F_MODE          equ     $0f             ; $18 high nibble: LP BP HP voice-3-off
+F_VK            equ     $c8             ; volume * mixer scale
+F_VOL           equ     $c9
+F_MIXK          equ     $ca             ; mixer scale, Q23 (config)
+T_X             equ     $cb             ; frame temporaries
+T_D             equ     $cc
+T_V1H           equ     $cd
+T_V2H           equ     $ce
+T_OUT           equ     $cf
+; 48-bit states: L memory, X = integer part, Y = fraction
+F_S1            equ     $e0
+F_S2            equ     $e1
+F_XL            equ     $e2
+F_XH            equ     $e3
+EXT_LP_W        equ     5182881         ; external 15.9 kHz low-pass, g/(1+g), Q23
+EXT_HP_W        equ     8522            ; external 15.9 Hz high-pass
+
 S_SHADOW        equ     $a8             ; 32-word register shadow
 
         org     p:$0000
@@ -60,6 +86,9 @@ main_loop:
         move    #>DSP_CMD_WRITE_REG,x0
         cmp     x0,a
         jeq     cmd_write
+        move    #>DSP_CMD_FILTER,x0
+        cmp     x0,a
+        jeq     cmd_filter
         move    #>DSP_CMD_LOAD_X,x0
         cmp     x0,a
         jeq     cmd_load
@@ -132,6 +161,30 @@ cmd_config:                             ; wave zero, floating TTL, model, shift 
         jclr    #0,x:m_hsr,*
         movep   x:m_hrx,x0
         move    x0,x:<G_SRSTART
+        jclr    #0,x:m_hsr,*
+        movep   x:m_hrx,x0
+        move    x0,x:<F_CC
+        jclr    #0,x:m_hsr,*
+        movep   x:m_hrx,x0
+        move    x0,x:F_MIXK
+        jclr    #0,x:m_hsr,*
+        movep   x:m_hrx,x0
+        move    x0,x:<F_FG
+        jmp     reply_ok
+
+cmd_filter:                             ; a1, a2, a3, k4 (Q23 words, derived by the host)
+        jclr    #0,x:m_hsr,*
+        movep   x:m_hrx,x0
+        move    x0,x:<F_A1
+        jclr    #0,x:m_hsr,*
+        movep   x:m_hrx,x0
+        move    x0,x:<F_A2
+        jclr    #0,x:m_hsr,*
+        movep   x:m_hrx,x0
+        move    x0,x:<F_A3
+        jclr    #0,x:m_hsr,*
+        movep   x:m_hrx,x0
+        move    x0,x:<F_K4
         jmp     reply_ok
 
 cmd_read:                               ; reg -> shadow value
@@ -163,7 +216,7 @@ cmd_write:                              ; reg, value
         move    x1,a
         move    #>21,x0
         cmp     x0,a
-        jge     reply_ok                ; filter and read-only registers: later milestones
+        jge     cw_filter               ; $15-$18: filter and mixer, then the read-only registers
         move    #>14,x0
         cmp     x0,a
         jlt     cw_not2
@@ -177,6 +230,36 @@ cw_not2:
         sub     x0,a
         move    a1,x1
         jmp     write_reg_1
+
+cw_filter:                              ; a = reg (21..31), y1 = value. fc is the host's business:
+        move    #>23,x0                 ; it only needs to be in the shadow.
+        cmp     x0,a
+        jeq     cw_resfilt
+        move    #>24,x0
+        cmp     x0,a
+        jeq     cw_modevol
+        jmp     reply_ok
+cw_resfilt:                             ; $17: routing in the low nibble
+        move    #>7,x0
+        move    y1,a
+        and     x0,a
+        move    a1,x:<F_FILT
+        jmp     reply_ok
+cw_modevol:                             ; $18: mode in the high nibble, volume in the low
+        move    #>$0f,x0
+        move    y1,a
+        and     x0,a
+        move    a1,y0
+        move    a1,x:F_VOL
+        move    x:F_MIXK,x0
+        mpy     x0,y0,a                 ; volume * scale, as an integer
+        asr     a
+        move    a0,x:F_VK
+        move    y1,a
+        rep     #4
+        lsr     a
+        move    a1,x:<F_MODE
+        jmp     reply_ok
 
 ; ------------------------------------------------------------------- helpers
 
@@ -195,6 +278,12 @@ reset_state:                            ; the model's power-on state
         move    #>S_SHADOW,r0
         rep     #32
         move    a,x:(r0)+
+        move    #>F_VK,r0
+        rep     #$1c
+        move    a,x:(r0)+               ; filter variables and states ($c8-$e3)
+        move    #>F_S1,r0
+        rep     #4
+        move    a,y:(r0)+               ; the states' fractions
         jsr     reset_voice_0
         jsr     reset_voice_1
         jsr     reset_voice_2
@@ -242,6 +331,7 @@ fr_osc_loop:                            ; oscillators, split at every sync-sourc
         jsr     outstage_0
         jsr     outstage_1
         jsr     outstage_2
+        jsr     mix_frame
 
         move    x:V0_OUT,a              ; the three voice outputs
         jclr    #1,x:m_hsr,*
@@ -252,7 +342,116 @@ fr_osc_loop:                            ; oscillators, split at every sync-sourc
         move    x:V2_OUT,a
         jclr    #1,x:m_hsr,*
         movep   a1,x:m_htx
+        move    x:T_OUT,a               ; and the chip output
+        jclr    #1,x:m_hsr,*
+        movep   a1,x:m_htx
         jmp     main_loop
+
+; ------------------------------------------------ mixer, filter, external filter
+; The spec is mix_output() in src/ref/sid_ref.c; every step below is one line
+; of it. States are 48-bit (Q24) in L memory, coefficients 24-bit words.
+mix_frame:
+        clr     a                       ; a = routed sum, b = direct sum
+        clr     b
+        move    x:V0_OUT,x0
+        jset    #0,x:<F_FILT,mx_r0
+        add     x0,b
+        jmp     mx_n0
+mx_r0:  add     x0,a
+mx_n0:  move    x:V1_OUT,x0
+        jset    #1,x:<F_FILT,mx_r1
+        add     x0,b
+        jmp     mx_n1
+mx_r1:  add     x0,a
+mx_n1:  move    x:V2_OUT,x0
+        jset    #2,x:<F_FILT,mx_r2
+        jset    #3,x:<F_MODE,mx_n2      ; voice 3 off mutes it unless routed
+        add     x0,b
+        jmp     mx_n2
+mx_r2:  add     x0,a
+mx_n2:  move    b1,x:T_D
+        asr     a                       ; x = routed sum >> 2: headroom for the resonance peak
+        asr     a
+        move    a1,x1
+        move    x1,x:T_X
+        move    x1,b                    ; b = x << 24
+        move    l:F_S2,a
+        sub     a,b                     ; h3 = x - s2
+        move    b1,y1                   ; v3h
+        move    x:F_S1,y0               ; s1h
+        move    x:<F_A1,x0
+        mpy     x0,y0,a
+        move    x:<F_A2,x0
+        mac     x0,y1,a                 ; v1 = a1*s1h + a2*v3h
+        move    l:F_S2,b
+        mac     x0,y0,b
+        move    x:<F_A3,x0
+        mac     x0,y1,b                 ; v2 = s2 + a2*s1h + a3*v3h
+        move    a1,x:T_V1H
+        move    b1,x:T_V2H
+        asl     a
+        move    l:F_S1,x
+        sub     x,a
+        move    a,l:F_S1                ; s1 = 2*v1 - s1
+        asl     b
+        move    l:F_S2,x
+        sub     x,b
+        move    b,l:F_S2                ; s2 = 2*v2 - s2
+        move    x:<F_K4,x0              ; hp = x - 4*k4*v1h - cc*v2h
+        move    x:T_V1H,y0
+        mpy     x0,y0,a
+        asl     a
+        asl     a
+        move    x:T_X,b
+        sub     a,b
+        move    x:<F_CC,x0
+        move    x:T_V2H,y0
+        mac     -x0,y0,b
+        clr     a                       ; the selected outputs, summed
+        jclr    #0,x:<F_MODE,mx_nolp
+        move    x:T_V2H,x0
+        add     x0,a
+mx_nolp: jclr   #1,x:<F_MODE,mx_nobp
+        move    x:T_V1H,x0
+        add     x0,a
+mx_nobp: jclr   #2,x:<F_MODE,mx_nohp
+        move    b1,x0
+        add     x0,a
+mx_nohp: move   a,x0                    ; t, through the limiter
+        move    x:<F_FG,y0
+        mpy     x0,y0,a
+        rep     #4
+        asl     a
+        move    x:T_D,b
+        add     b,a                     ; direct + filtered
+        move    a,x0                    ; mixed, limited
+        move    x:F_VK,y0
+        mpy     x0,y0,a                 ; Q24 chip output scale
+        move    l:F_XL,x                ; external low-pass
+        sub     x,a
+        move    a1,y0
+        move    #>EXT_LP_W,y1
+        mpy     y0,y1,a
+        add     x,a                     ; y
+        tfr     a,b
+        asl     a
+        sub     x,a
+        move    a,l:F_XL
+        move    l:F_XH,x                ; external high-pass of y
+        tfr     b,a
+        sub     x,a
+        move    a1,y0
+        move    #>EXT_HP_W,y1
+        mpy     y0,y1,a
+        add     x,a                     ; y2
+        sub     a,b                     ; y - y2
+        asl     a
+        sub     x,a
+        move    a,l:F_XH
+        rnd     b
+        move    b1,x:T_OUT
+mix_end:
+        rts
 
 ;@voice
 ; ============================================================ voice @V@

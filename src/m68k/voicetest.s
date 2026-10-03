@@ -2,7 +2,7 @@
 ;
 ; Boots the DSP kernel, loads its tables, replays the register writes of one
 ; test vector (build/gate/voicetest_vec.i, written by tools/dsp/make_vec) one
-; codec frame at a time, and writes the DSP's three voice outputs of every frame to
+; codec frame at a time, and writes the DSP's three voice outputs and the chip output of every frame to
 ; VOICEOUT.BIN as big-endian 32-bit signed integers. tools/dsp/voice_dsp_gate.py compares
 ; that file with the C reference model's output.
 ;
@@ -19,6 +19,7 @@ DSP_X_WORDS     equ     8192
 DSP_Y_WORDS     equ     8192
 DSP_ABILITY     equ     3
 MAX_FRAMES      equ     40000
+WORDS_PER_FRAME equ     4
 
 DSP_HOST_ISR    equ     $ffffa202
 DSP_HOST_DATA   equ     $ffffa204
@@ -74,7 +75,7 @@ start:
         tst.l   d0
         bmi     fail
         move.w  d0,out_handle
-        Fwrite  out_handle,#vec_frames*12,outbuf
+        Fwrite  out_handle,#vec_frames*16,outbuf
         Fclose  out_handle
         Cconws  done
         bra.s   exit
@@ -109,7 +110,15 @@ run_vector:
         bsr     dsp_put
         move.l  #cfg_sr_start,d0
         bsr     dsp_put
+        move.l  #cfg_hp_cancel,d0
+        bsr     dsp_put
+        move.l  #cfg_mix_k,d0
+        bsr     dsp_put
+        move.l  #cfg_filter_gain,d0
+        bsr     dsp_put
         bsr     dsp_get
+        lea     vec_coef0,a2
+        bsr     send_coef
 
         lea     vec_events,a0
         lea     outbuf,a1
@@ -126,12 +135,20 @@ ev_loop:
         move.l  8(a0),d0
         bsr     dsp_put
         bsr     dsp_get
-        lea     12(a0),a0
+        move.l  4(a0),d0
+        cmp.l   #21,d0                  ; fc and res/routing changes carry new filter coefficients
+        blt.s   ev_next
+        cmp.l   #23,d0
+        bgt.s   ev_next
+        lea     12(a0),a2
+        bsr     send_coef
+ev_next:
+        lea     28(a0),a0
         bra.s   ev_loop
 ev_done:
         move.l  #DSP_CMD_FRAME,d0
         bsr     dsp_put
-        moveq   #2,d6                   ; the three voice outputs
+        moveq   #3,d6                   ; the three voice outputs and the chip output
 frame_out:
         bsr     dsp_get
         lsl.l   #8,d0                   ; sign-extend the 24-bit word
@@ -143,6 +160,18 @@ frame_out:
         ble.s   frame_loop
         movem.l (sp)+,d0-d7/a0-a6
         rts
+
+; a2 -> four longs (a1, a2, a3, k4): DSP_CMD_FILTER
+send_coef:
+        move.l  #DSP_CMD_FILTER,d0
+        bsr     dsp_put
+        moveq   #3,d3
+sc_loop:
+        move.l  (a2)+,d0
+        and.l   #$ffffff,d0
+        bsr     dsp_put
+        dbra    d3,sc_loop
+        bra     dsp_get
 
 ; d0.l = word (24 bits), paced on TXDE
 dsp_put:
@@ -180,6 +209,6 @@ out_name:       dc.b    'VOICEOUT.BIN',0
 
 dsp_stage2_reply: ds.l 1
 out_handle:     ds.w 1
-outbuf:         ds.l MAX_FRAMES*3
+outbuf:         ds.l MAX_FRAMES*WORDS_PER_FRAME
 
         end

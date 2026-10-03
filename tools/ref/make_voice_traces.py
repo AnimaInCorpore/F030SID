@@ -8,6 +8,8 @@ Deterministic: running it again reproduces the committed files.
             combined waveforms, test, sync, ring, gate toggles, AD/SR changes
             including rate changes under a running envelope). These gate the
             reference bit-for-bit against reSID.
+  filt_*    rand_* traffic plus random filter, resonance, routing, mode and volume
+            writes; these gate the filter and mixer (DSP bit for bit, reSID by spectrum).
   adsr_bug  an envelope whose rate is lowered below the running counter
             (the ADSR delay bug), retriggered mid-decay, released at zero.
   noise     noise at every frequency decade, plus test-bit LFSR resets.
@@ -205,6 +207,35 @@ def dsp2_trace(seed, cycles=500000):
     return ev, cycles
 
 
+def filt_trace(seed, cycles=600000):
+    """Voice traffic as rand_*, plus random filter and mixer registers ($15-$18):
+    cutoff sweeps and jumps over all 2048 values, every resonance and routing,
+    every mode combination (voice 3 off included) and volume steps."""
+    rnd = random.Random(1000 + seed)
+    ev, _ = rand_trace(seed, cycles)
+    fc = rnd.randint(0, 2047)
+    ev += [(5, 21, fc & 7), (5, 22, fc >> 3), (5, 23, (rnd.randint(0, 15) << 4) | rnd.randint(1, 7)),
+           (5, 24, (rnd.choice([1, 2, 4, 3, 5, 6, 7, 1, 1]) << 4) | rnd.randint(8, 15))]
+    t = 200
+    while t < cycles:
+        t += int(rnd.expovariate(1 / 6000.0)) + 1
+        k = rnd.random()
+        if k < 0.30:                     # cutoff sweep step
+            fc = max(0, min(2047, fc + rnd.randint(-60, 60)))
+            ev += [(t, 22, fc >> 3), (t + 1, 21, fc & 7)]
+        elif k < 0.40:                   # cutoff jump
+            fc = rnd.randint(0, 2047)
+            ev += [(t, 21, fc & 7), (t, 22, fc >> 3)]
+        elif k < 0.60:
+            ev.append((t, 23, (rnd.randint(0, 15) << 4) | rnd.randint(0, 15)))
+        elif k < 0.90:
+            mode = rnd.randint(0, 15)
+            ev.append((t, 24, (mode << 4) | rnd.randint(0, 15)))
+        else:
+            ev.append((t, 24, (rnd.choice([1, 2, 4, 5, 3]) << 4) | rnd.randint(0, 15)))
+    return ev, cycles
+
+
 def main():
     os.makedirs(OUT, exist_ok=True)
     for seed in range(1, 9):
@@ -214,6 +245,8 @@ def main():
         save(f"dsp_{seed}", *dsp_trace(seed))
     for seed in range(1, 11):
         save(f"dsp2_{seed}", *dsp2_trace(seed))
+    for seed in range(1, 7):
+        save(f"filt_{seed}", *filt_trace(seed))
     save("adsr_bug", *adsr_bug())
     save("noise", *noise())
     save("sync_ring", *sync_ring())

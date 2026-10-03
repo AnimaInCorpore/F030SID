@@ -85,23 +85,30 @@ typedef struct {
     uint64_t recip;               /* 2^62 / (freq * SID_CYC_Q24), 0 if freq == 0 */
 } sid_voice_t;
 
-/* Filter, mixer and external filter (registers $15-$18). The coefficients are
- * derived on the host (68030) when a register changes; the state is what the
- * DSP integrates every frame. */
+/* Filter, mixer and external filter (registers $15-$18). The coefficient words
+ * are derived on the host (68030) when fc or res change, see sid_filter_coeffs;
+ * the state is what the DSP integrates every frame. All 24-bit words. */
+typedef struct {
+    int32_t a1, a2, a3;           /* TPT coefficients, Q23 */
+    int32_t k4;                   /* k = 1/Q divided by 4, Q23 */
+} sid_filter_coeffs_t;
+
+typedef struct {
+    int64_t s1, s2;               /* SVF integrator states, Q24 (48-bit on the DSP) */
+    int64_t xl, xh;               /* external filter states, Q24 */
+} sid_filter_state_t;
+
 typedef struct {
     uint32_t fc;                  /* 11 bit cutoff */
     uint32_t res, filt, mode, vol;
-    /* TPT state-variable filter, per frame (49.17 kHz) */
-    int64_t  a1, a2, a3, k;       /* Q40 */
-    int64_t  s1, s2;              /* Q24 voice units, 48-bit on the DSP */
-    /* external filter: 16 kHz low-pass, 16 Hz high-pass */
-    int64_t  xl_s, xh_s;          /* Q24 */
+    sid_filter_coeffs_t c;
 } sid_filter_t;
 
 typedef struct {
     sid_model_t model;
     sid_voice_t v[3];
     sid_filter_t flt;
+    sid_filter_state_t st[2];     /* [0] fed with the naive voices (what the DSP does), [1] with bl */
     uint32_t eps;                 /* Q24 sample-instant fraction, see sid_frame_step */
 } sid_ref_t;
 
@@ -110,7 +117,8 @@ typedef struct {
     uint32_t eps;                 /* Q24 */
     int32_t  naive[3];            /* reSID Voice::output() units, about +-2^21 */
     int32_t  bl[3];               /* band-limited, same units */
-    int32_t  mix;                 /* mixer + filter + external filter, 16-bit chip output scale */
+    int32_t  mix;                 /* mixer + filter + external filter of the naive voices, 16-bit chip output scale */
+    int32_t  mix_bl;              /* the same from the band-limited voices */
 } sid_frame_t;
 
 /* Load reSID's combined-waveform data (wave*.dat in resid_dir) and build the
@@ -126,6 +134,13 @@ const uint16_t *sid_tab_wave(sid_model_t model, int waveform); /* 4096 entries, 
 int32_t sid_shift_reset_start(sid_model_t model);
 int32_t sid_wave_zero(sid_model_t model);
 int32_t sid_floating_ttl_start(sid_model_t model);
+
+/* The per-model constants the DSP is configured with (words of the mixer and filter
+ * stages): high-pass cancellation Q23, mixer scale Q23, filter path gain Q21. */
+void sid_mix_config(sid_model_t model, int32_t *hp_cancel, int32_t *mix_k, int32_t *filter_gain);
+
+/* Host-side derivation of the filter coefficient words (table lookups, no divide). */
+void sid_filter_coeffs(sid_model_t model, unsigned fc, unsigned res, sid_filter_coeffs_t *c);
 
 void sid_ref_reset(sid_ref_t *s, sid_model_t model);
 

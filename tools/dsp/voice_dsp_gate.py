@@ -4,8 +4,10 @@
 For every trace and chip model: make_vec turns the trace into a test vector
 and the reference model's expected three-voice output; the m68k harness
 (src/m68k/voicetest.s) is assembled with that vector, run under Hatari, and
-feeds the DSP kernel the same register writes frame by frame; the 24-bit
-words the DSP returns (VOICEOUT.BIN) must equal the expected output exactly.
+feeds the DSP kernel the same register writes frame by frame (with the filter
+coefficient words the 68030 would derive); the 24-bit words the DSP returns
+(three voices and the chip output after filter, mixer and external filter;
+VOICEOUT.BIN) must equal the expected output exactly.
 
   voice_dsp_gate.py --vasm V --vlink L --hatari H --tos ROM [--quick] [traces...]
 
@@ -27,8 +29,10 @@ TRACES = os.path.join(ROOT, "tests", "traces")
 # Milestone 2: every waveform setting incl. noise and the combined waveforms
 # (dsp2_*, noise), ring bit with an idle voice 3.
 # Milestone 3: all three voices with hard sync and ring modulation between them
+# Milestone 4: the filter, mixer and external filter (filt_*: rand_* traffic plus the
+# registers $15-$18), the chip output compared as a fourth word per frame.
 # (rand_*: every register of every voice at random; sync_ring).
-SUPPORTED = ([f"rand_{i}" for i in range(1, 9)] + ["sync_ring"] +
+SUPPORTED = ([f"filt_{i}" for i in range(1, 7)] + [f"rand_{i}" for i in range(1, 9)] + ["sync_ring"] +
              [f"dsp2_{i}" for i in range(1, 11)] + ["noise"] +
              [f"dsp_{i}" for i in range(1, 9)] + ["adsr_bug"] +
              [f"tone_{k}_{f}" for k in ("saw", "pulse", "tri")
@@ -75,12 +79,12 @@ def one(args, name, model):
     raw = open(out, "rb").read()
     got = list(struct.unpack(f">{len(raw) // 4}i", raw))
     if len(got) != len(want):
-        return f"{len(got)} words, expected {len(want)}", len(want) // 3, None
+        return f"{len(got)} words, expected {len(want)}", len(want) // 4, None
     bad = [i for i in range(len(want)) if got[i] != want[i]]
-    frames = len(want) // 3
+    frames = len(want) // 4
     if bad:
         i = bad[0]
-        return (f"{len(bad)} of {len(want)} words differ; first at frame {i // 3 + 1} voice {i % 3 + 1}: "
+        return (f"{len(bad)} of {len(want)} words differ; first at frame {i // 4 + 1} {['voice 1', 'voice 2', 'voice 3', 'chip output'][i % 4]}: "
                 f"DSP {got[i]} expected {want[i]}"), frames, bad
     return None, frames, []
 

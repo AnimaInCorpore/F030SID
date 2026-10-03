@@ -8,7 +8,7 @@
  * the frame count, and the register writes tagged with the frame they are
  * applied before (the same rule as ref_run: a write belongs to the frame whose
  * cycle range contains it). expected.txt has the reference model's voice 0
- * `naive` output, one integer per frame.
+ * three voice `naive` outputs and the chip output (`mix`), four integers per frame.
  */
 #include "sid_ref.h"
 
@@ -89,6 +89,11 @@ int main(int argc, char **argv)
     fprintf(vec, "cfg_ttl_start equ %d\n", (int)sid_floating_ttl_start(model));
     fprintf(vec, "cfg_model equ %d\n", (int)model);
     fprintf(vec, "cfg_sr_start equ %d\n", (int)sid_shift_reset_start(model));
+    {
+        int32_t cc, mk, fg;
+        sid_mix_config(model, &cc, &mk, &fg);
+        fprintf(vec, "cfg_hp_cancel equ %d\ncfg_mix_k equ %d\ncfg_filter_gain equ %d\n", (int)cc, (int)mk, (int)fg);
+    }
     for (i = 0; i < 16; i++) tmp[i] = sid_tab_rate_period()[i];
     table(vec, "tab_rate", tmp, 16);
     for (i = 0; i < 16; i++) tmp[i] = sid_tab_sustain_level()[i];
@@ -110,9 +115,11 @@ int main(int argc, char **argv)
 
     /* Run the reference to find the frame each write lands in and the output. */
     sid_ref_reset(&s, model);
+    fprintf(vec, "vec_coef0:\n        dc.l    %d,%d,%d,%d\n", (int)s.flt.c.a1, (int)s.flt.c.a2, (int)s.flt.c.a3, (int)s.flt.c.k4);
     {
         size_t cap = nw + 1;
         long *ef = malloc(cap * sizeof *ef);
+        sid_filter_coeffs_t *ec = malloc(cap * sizeof *ec);
         for (frame = 1; c < end; frame++) {
             uint32_t peek = s.eps;
             int n = sid_frame_step(&peek);
@@ -120,19 +127,22 @@ int main(int argc, char **argv)
             while (wi < nw && w[wi].cycle < c + n) {
                 sid_ref_write(&s, w[wi].reg, w[wi].value);
                 ef[wi] = frame;
+                ec[wi] = s.flt.c;               /* the coefficients after this write */
                 wi++;
             }
             sid_ref_frame(&s, &fr);
             c += fr.n;
-            fprintf(expf, "%d %d %d\n", fr.naive[0], fr.naive[1], fr.naive[2]);
+            fprintf(expf, "%d %d %d %d\n", fr.naive[0], fr.naive[1], fr.naive[2], fr.mix);
             nframes++;
         }
         fprintf(vec, "vec_frames equ %ld\n", nframes);
         fprintf(vec, "vec_events:\n");
         for (k = 0; k < nw; k++)
-            fprintf(vec, "        dc.l    %ld,%u,%u\n", ef[k], w[k].reg, w[k].value);
-        fprintf(vec, "        dc.l    -1,0,0\n");
+            fprintf(vec, "        dc.l    %ld,%u,%u,%d,%d,%d,%d\n", ef[k], w[k].reg, w[k].value,
+                    (int)ec[k].a1, (int)ec[k].a2, (int)ec[k].a3, (int)ec[k].k4);
+        fprintf(vec, "        dc.l    -1,0,0,0,0,0,0\n");
         free(ef);
+        free(ec);
     }
     fclose(vec);
     fclose(expf);
