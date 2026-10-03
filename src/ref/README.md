@@ -5,7 +5,7 @@ SID voices (oscillator, noise, waveform tables, DAC, envelope, hard sync, ring
 modulation, test bit) rendered one 49,169.921875 Hz codec frame at a time in
 the integer arithmetic of the DSP56001. It is gated against reSID
 (`third_party/resid`) on register traces. The filter, external filter and
-mixer are not in it yet.
+mixer are in it too (graded by spectrum, not bit-exact, see below).
 
 ```sh
 git submodule update --init third_party/resid
@@ -67,6 +67,40 @@ Findings from building the gate, relevant to the DSP design:
 - Triangle gains little from the instant correction (its error is the DAC
   kinks plus the slope discontinuity, which a polyBLAMP would address).
 
+## Filter, mixer and external filter
+
+`sid_ref_write` takes registers 21..24 for `$15..$18`. `sid_frame_t.mix` is the
+chip output (16-bit scale) per codec frame, fed with the band-limited voices:
+
+- routing (`$17` low nibble), voice 3 off, mode bits LP/BP/HP, volume `$18`;
+- a TPT state-variable filter (Zavalishin) with 48-bit states and Q40
+  coefficients, `g = tan(pi f0 / fs)` and `k = 1/Q` looked up per `fc` / `res`
+  from `filter_tables.h` (the 68030 derives `a1 a2 a3` on a register write);
+- the external filters, a 15.9 kHz low-pass and a 15.9 Hz high-pass, one-pole TPT;
+- gain staging calibrated on reSID (`mix_cal`, `oracle_resid cal`): the mixer
+  scale per model, the 6581's filter-path attenuation (0.70, the 8580's is
+  1.03), and a small high-pass leak on the 6581 (its summer does not cancel the
+  low-pass term completely).
+
+The 6581/8580 cutoff and resonance curves are measured from reSID, not derived:
+`tools/ref/filter_measure.py` drives white noise into reSID's external input,
+fits a two-pole low-pass (f0, Q) per `fc` and the Q ratio per `res`, and
+`tools/ref/gen_filter_tables.py` turns that into `filter_tables.h`.
+
+`make filter-gate` (`tools/ref/filter_gate.py`) routes the same noise voice
+(bit-exact in both) through each mode, cutoff and resonance and compares the
+Welch spectra of reSID's chip output and the reference over 100 Hz - 12 kHz,
+in bins 10 dB above reSID's own floor. Results: `tools/ref/filter_gate_results.txt`.
+Mean rms error per mode: low-pass about 2 dB, band-pass 4, notch 4, high-pass 6.
+
+Known gaps, in order of size: the 6581 below fc ~ 750 is not a two-pole filter
+(its roll-off is about 7 dB/octave and a two-pole fit is 10-20 dB too steep);
+6581 high-pass and band-pass at high cutoff are not the low-pass's f0 (reSID's
+LP fit says 15-20 kHz, its HP peaks near 7 kHz) so those modes are off by
+10-16 dB around the peak; reSID's low-frequency floor in HP/BP/notch modes
+(dither and finite-gain summers) is not reproduced; the 6581's filter
+distortion is not modelled.
+
 ## Model scope
 
 Follows reSID's **bulk** clocking (`clock(delta_t)`): one call per frame
@@ -77,8 +111,7 @@ cannot reproduce; this model matches the bulk path, which is what the oracle
 runs. The rule for register writes: a write is applied at the start of the
 frame containing its cycle, up to 20 cycles (about 20 us) early.
 
-Not modelled: filter, external filter, mixing, `$D418` volume, voice 3 off
-(next step); the OSC3/ENV3/POT readbacks; the 8580 triangle-saw read
+Not modelled: the 6581's nonlinear filter distortion, the external-input pin; the OSC3/ENV3/POT readbacks; the 8580 triangle-saw read
 pipeline; bus value decay; the single-cycle pipelines above; noise and
 combined waveforms in `bl` (they pass through at the integer cycle).
 

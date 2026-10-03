@@ -15,6 +15,7 @@
 //
 // reSID keeps its voices private; the hack below is for this test tool only.
 
+#include <cmath>
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
@@ -61,18 +62,72 @@ static void setup(reSID::SID &sid, bool is8580)
 
 int main(int argc, char **argv)
 {
-    if (argc < 5) {
+    if (argc < 4) {
         fprintf(stderr, "usage: %s frames|cycles 6581|8580 trace [voice] out\n", argv[0]);
         return 2;
     }
     const std::string mode = argv[1];
     const bool is8580 = !strcmp(argv[2], "8580");
     std::vector<Write> writes;
-    long long end;
-    if (!read_trace(argv[3], writes, end)) return 1;
+    long long end = 0;
 
     reSID::SID sid;
     setup(sid, is8580);
+    // oracle_resid cal <6581|8580> <routed 0|1> <fc> <res> <mode> [wave]
+    // Steady voice 1 note (wave: 0x10 tri, 0x20 saw, 0x40 pulse), at full
+    // sustain and volume 15; prints the rms and mean of the chip output over
+    // the final 400k cycles: the gain staging of mixer and filter.
+    if (mode == "cal" && argc >= 7) {
+        const unsigned routed = atoi(argv[3]), fc = atoi(argv[4]), res = atoi(argv[5]), fm = atoi(argv[6]);
+        const unsigned wave = argc >= 8 ? strtoul(argv[7], 0, 0) : 0x20;
+        sid.write(0x15, fc & 7);
+        sid.write(0x16, fc >> 3);
+        sid.write(0x17, (res << 4) | routed);
+        sid.write(0x18, (fm << 4) | 15);
+        sid.write(0, 0x00); sid.write(1, 0x10);          // 0x1000 = ~240 Hz
+        sid.write(2, 0x00); sid.write(3, 0x08);
+        sid.write(5, 0x00); sid.write(6, 0xf0);
+        sid.write(4, wave | 1);
+        double sum = 0, sq = 0; long long cnt = 0;
+        for (long long c = 0; c < 1000000; c++) {
+            sid.clock(1);
+            if (c >= 600000) { double o = sid.output(); sum += o; sq += o * o; cnt++; }
+        }
+        double mean = sum / cnt;
+        printf("%s routed=%u fc=%u res=%u mode=%u mean=%.1f rms=%.1f\n", argv[2], routed, fc, res, fm, mean, sqrt(sq / cnt - mean * mean));
+        return 0;
+    }
+
+    // oracle_resid response <6581|8580> <fc> <res> <mode> <out.f32>
+    // Drives white noise into the external input, routed through the filter
+    // (mode: 1 LP, 2 BP, 4 HP bits of $D418 high nibble), volume 15, and dumps
+    // input and output decimated by 16 SID cycles (box average) as float pairs.
+    if (mode == "response" && argc >= 7) {
+        const unsigned fc = atoi(argv[3]), res = atoi(argv[4]), fm = atoi(argv[5]);
+        const long long n = 1 << 21;
+        sid.set_voice_mask(0x0f);   // let the external input through
+        sid.write(0x15, fc & 7);
+        sid.write(0x16, fc >> 3);
+        sid.write(0x17, (res << 4) | 8);
+        sid.write(0x18, (fm << 4) | 15);
+        srand(1);
+        std::vector<float> buf;
+        double si = 0, so = 0;
+        for (long long c = 0; c < n; c++) {
+            short in = (short)((rand() & 0x1fff) - 0x1000);
+            sid.input(in);
+            sid.clock(1);
+            si += in; so += sid.output();
+            if ((c & 15) == 15) { buf.push_back((float)(si / 16)); buf.push_back((float)(so / 16)); si = so = 0; }
+        }
+        FILE *out = fopen(argv[6], "wb");
+        if (!out) { perror(argv[6]); return 1; }
+        fwrite(buf.data(), sizeof(float), buf.size(), out);
+        fclose(out);
+        return 0;
+    }
+
+    if (!read_trace(argv[3], writes, end)) return 1;
     size_t wi = 0;
 
     if (mode == "frames") {
@@ -100,6 +155,26 @@ int main(int argc, char **argv)
             }
             fputc('\n', out);
         }
+        fclose(out);
+        return 0;
+    }
+
+    // oracle_resid mix <6581|8580> <trace> <out.i32>: SID::output() (mixer, filter,
+    // external filter) after every cycle; registers 21..24 are $15..$18.
+    if (mode == "mix" && argc >= 5) {
+        FILE *out = fopen(argv[4], "wb");
+        if (!out) { perror(argv[4]); return 1; }
+        std::vector<int32_t> buf;
+        buf.reserve((size_t)end);
+        for (long long c = 0; c < end; c++) {
+            while (wi < writes.size() && writes[wi].cycle <= c) {
+                sid.write(writes[wi].reg, writes[wi].value);
+                ++wi;
+            }
+            sid.clock(1);
+            buf.push_back(sid.output());
+        }
+        fwrite(buf.data(), sizeof(int32_t), buf.size(), out);
         fclose(out);
         return 0;
     }

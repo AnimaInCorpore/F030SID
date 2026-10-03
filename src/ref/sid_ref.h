@@ -85,9 +85,23 @@ typedef struct {
     uint64_t recip;               /* 2^62 / (freq * SID_CYC_Q24), 0 if freq == 0 */
 } sid_voice_t;
 
+/* Filter, mixer and external filter (registers $15-$18). The coefficients are
+ * derived on the host (68030) when a register changes; the state is what the
+ * DSP integrates every frame. */
+typedef struct {
+    uint32_t fc;                  /* 11 bit cutoff */
+    uint32_t res, filt, mode, vol;
+    /* TPT state-variable filter, per frame (49.17 kHz) */
+    int64_t  a1, a2, a3, k;       /* Q40 */
+    int64_t  s1, s2;              /* Q24 voice units, 48-bit on the DSP */
+    /* external filter: 16 kHz low-pass, 16 Hz high-pass */
+    int64_t  xl_s, xh_s;          /* Q24 */
+} sid_filter_t;
+
 typedef struct {
     sid_model_t model;
     sid_voice_t v[3];
+    sid_filter_t flt;
     uint32_t eps;                 /* Q24 sample-instant fraction, see sid_frame_step */
 } sid_ref_t;
 
@@ -96,6 +110,7 @@ typedef struct {
     uint32_t eps;                 /* Q24 */
     int32_t  naive[3];            /* reSID Voice::output() units, about +-2^21 */
     int32_t  bl[3];               /* band-limited, same units */
+    int32_t  mix;                 /* mixer + filter + external filter, 16-bit chip output scale */
 } sid_frame_t;
 
 /* Load reSID's combined-waveform data (wave*.dat in resid_dir) and build the
@@ -114,7 +129,8 @@ int32_t sid_floating_ttl_start(sid_model_t model);
 
 void sid_ref_reset(sid_ref_t *s, sid_model_t model);
 
-/* Register write, reg 0..20 (voice 1 = 0..6, voice 2 = 7..13, voice 3 = 14..20). */
+/* Register write, reg 0..20 (voice 1 = 0..6, voice 2 = 7..13, voice 3 = 14..20),
+ * 21..24 = $15..$18 (fc low 3 bits, fc high 8 bits, res/filt, mode/volume). */
 void sid_ref_write(sid_ref_t *s, unsigned reg, unsigned value);
 
 /* Advance one codec frame and produce the voice outputs at its end. */

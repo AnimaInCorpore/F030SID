@@ -68,6 +68,7 @@ endef
 
 HOST_CC ?= gcc
 HOST_CXX ?= g++
+HOST_STATIC ?= -static   # macOS has no static libc: make HOST_STATIC=
 PERL ?= perl
 PYTHON ?= python3
 REF_BUILD := build/ref
@@ -80,7 +81,7 @@ RESID_TABLES := wave6581_PST wave6581_PS_ wave6581_P_T wave6581__ST \
 REF_EXE := $(if $(filter MINGW% MSYS% CYGWIN%,$(HOST_UNAME)),.exe,)
 
 .PHONY: all help host dsp check run clean tools ratetest-hatari dspprobe-hatari smoke profile-sid \
-	ref ref-gate dsp-gate
+	ref ref-gate filter-gate dsp-gate
 
 ref: $(REF_BUILD)/ref_run$(REF_EXE) $(REF_BUILD)/oracle_resid$(REF_EXE)
 
@@ -98,16 +99,21 @@ $(RESID_GEN)/%.h: $(RESID_DIR)/%.dat
 $(REF_BUILD)/oracle_resid$(REF_EXE): tools/ref/oracle_resid.cc src/ref/sid_ref.h \
 		$(RESID_GEN)/siddefs.h $(addprefix $(RESID_GEN)/,$(addsuffix .h,$(RESID_TABLES)))
 	@mkdir -p $(REF_BUILD)
-	$(HOST_CXX) -O2 -static -std=gnu++11 -w -I$(RESID_GEN) -I$(RESID_DIR) -Isrc/ref \
+	$(HOST_CXX) -O2 $(HOST_STATIC) -std=gnu++11 -w -I$(RESID_GEN) -I$(RESID_DIR) -Isrc/ref \
 		-DVERSION='"1.0"' $(addprefix $(RESID_DIR)/,$(RESID_SOURCES)) $< -o $@
 
 $(REF_BUILD)/ref_run$(REF_EXE): tools/ref/ref_run.c src/ref/sid_ref.c src/ref/sid_ref.h
 	@mkdir -p $(REF_BUILD)
-	$(HOST_CC) -O2 -static -std=c99 -Wall -Wextra -Isrc/ref src/ref/sid_ref.c $< -o $@ -lm
+	$(HOST_CC) -O2 $(HOST_STATIC) -std=c99 -Wall -Wextra -Isrc/ref src/ref/sid_ref.c $< -o $@ -lm
 
 # Bit-exactness against reSID and band-limiting against the per-cycle chip.
 ref-gate: ref
 	$(PYTHON) tools/ref/voice_gate.py --build $(REF_BUILD) | tee $(REF_BUILD)/gate-results.txt
+
+# The reference filter/mixer against reSID by spectrum (not bit-exact: reSID
+# integrates an analog model at 1 MHz). Needs numpy and scipy.
+filter-gate: ref
+	$(PYTHON) tools/ref/filter_gate.py --build $(REF_BUILD) | tee $(REF_BUILD)/filter-gate-results.txt
 
 # The DSP kernel against the C reference, bit for bit, under Hatari: each trace
 # becomes a test vector, the m68k harness replays it through the kernel, and the
@@ -115,7 +121,7 @@ ref-gate: ref
 # two traces; trace names after it select others.
 $(REF_BUILD)/make_vec$(REF_EXE): tools/dsp/make_vec.c src/ref/sid_ref.c src/ref/sid_ref.h
 	@mkdir -p $(REF_BUILD)
-	$(HOST_CC) -O2 -static -std=c99 -Wall -Wextra -Isrc/ref src/ref/sid_ref.c $< -o $@ -lm
+	$(HOST_CC) -O2 $(HOST_STATIC) -std=c99 -Wall -Wextra -Isrc/ref src/ref/sid_ref.c $< -o $@ -lm
 
 dsp-gate: all $(REF_BUILD)/make_vec$(REF_EXE)
 	$(call require_hatari,dsp-gate)

@@ -50,7 +50,7 @@ Milestone 3 made it three voices and added the interaction between them:
   most 20 additions, only when a toggle really is that near;
 - the frame returns the three voice outputs.
 
-Not yet: the filter and mixer (registers $15-$18 are accepted and ignored),
+Not yet on the DSP: the filter and mixer (registers $15-$18 are accepted and ignored; the C reference has them),
 band-limiting (polyBLEP and the sample-instant phase), the SSI stream.
 
 ### Source layout
@@ -143,6 +143,7 @@ rule of the earlier versions holds for every other command.
 ## Next
 
 1. Cycle cost of the frame path in the calibrated Hatari (`make profile-voice`).
-2. The filter, external filter and mixer (C reference first, as for the voices).
+2. The filter, external filter and mixer on the DSP. The C reference exists (`src/ref`, `make filter-gate`);
+   the 6581's HP/BP at high cutoff and its low-cutoff region are the open accuracy items.
 3. Band-limited output (sample-instant phase, polyBLEP-4), then the filter.
 4. The SSI stream and the player (PSID loader, 6502 core, timestamped writes).

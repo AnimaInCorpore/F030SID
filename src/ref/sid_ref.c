@@ -11,6 +11,7 @@
  * DSP mapping notes are marked "DSP:".
  */
 #include "sid_ref.h"
+#include "filter_tables.h"
 
 #include <math.h>
 #include <stdio.h>
@@ -523,6 +524,9 @@ static void wave_reset(sid_voice_t *w)
 
 /* ------------------------------------------------------------------ chip */
 
+static void filter_coeffs(sid_ref_t *s);
+static void filter_write(sid_ref_t *s, unsigned reg, unsigned value);
+
 void sid_ref_reset(sid_ref_t *s, sid_model_t model)
 {
     int i;
@@ -537,6 +541,7 @@ void sid_ref_reset(sid_ref_t *s, sid_model_t model)
         wave_reset(v);
         env_reset(v);
     }
+    filter_coeffs(s);
 }
 
 void sid_ref_write(sid_ref_t *s, unsigned reg, unsigned value)
@@ -545,6 +550,7 @@ void sid_ref_write(sid_ref_t *s, unsigned reg, unsigned value)
     sid_voice_t *v;
     const sid_voice_t *src;
 
+    if (reg >= 21 && reg <= 24) { filter_write(s, reg - 21, value & 0xff); return; }
     if (i > 2) return;
     v = &s->v[i];
     src = &s->v[(i + 2) % 3];            /* voice i is hard-synced and ring-modulated by i-1 */
@@ -687,6 +693,109 @@ static int32_t voice_output_bl(const sid_ref_t *s, const sid_voice_t *v, const s
     return (int32_t)((wave_q12 * (int32_t)env_dac[m][v->envelope_counter]) >> 12);
 }
 
+
+/* ------------------------------------------------- filter, mixer, external */
+
+/*
+ * Gain staging, calibrated against reSID (tools/ref/filter_gate.py,
+ * oracle_resid cal): MIX_K (Q24) converts the sum of voice units times the volume
+ * nibble to the 16-bit chip output, FILTER_GAIN_Q12 is the filter path's gain
+ * relative to a voice routed past it (the 6581 filter attenuates, the 8580's is
+ * unity). Q24 / Q12 integers: on the DSP these are the final MPY factors.
+ */
+#define EXT_LP_G_Q40 679338157677LL     /* 15.9 kHz: R 10k, C 1n; g/(1+g), g = tan(pi f/fs) */
+#define EXT_HP_G_Q40 1116937984LL       /* 15.9 Hz:  R 1k, C 10u */
+#ifndef MIX_K_6581
+#define MIX_K_6581 6981
+#define MIX_K_8580 3171
+#define FILTER_GAIN_6581 2845
+#define FILTER_GAIN_8580 4205
+#endif
+static const int32_t mix_k_q24[2]       = { MIX_K_6581, MIX_K_8580 };
+static const int32_t filter_gain_q12[2] = { FILTER_GAIN_6581, FILTER_GAIN_8580 };
+
+#ifndef HP_CANCEL_6581
+#define HP_CANCEL_6581 62000     /* 1 - 0.055 */     /* 1 - 0.115 */     /* 1 - 0.18 */
+#define HP_CANCEL_8580 65536     /* exact: reSID's 8580 leak is below its dither floor */     /* 1 - 0.045 */
+#endif
+static const int32_t hp_cancel_q16[2] = { HP_CANCEL_6581, HP_CANCEL_8580 };
+
+#define Q24(x) ((int64_t)(x) << 24)
+
+/* Host side (68030): coefficients of the TPT state-variable filter from
+ * fc (cutoff table) and res (Q table). */
+static void filter_coeffs(sid_ref_t *s)
+{
+    sid_filter_t *f = &s->flt;
+    const double g = filter_g_q21[s->model][f->fc] / 2097152.0;
+    const double k = (filter_k0_q21[s->model][f->fc] / 2097152.0) * (filter_kr_q21[s->model][f->res] / 2097152.0);
+    const double a1 = 1.0 / (1.0 + g * (g + k));
+
+    f->a1 = (int64_t)floor(a1 * 1099511627776.0 + 0.5);
+    f->a2 = (int64_t)floor(g * a1 * 1099511627776.0 + 0.5);
+    f->a3 = (int64_t)floor(g * g * a1 * 1099511627776.0 + 0.5);
+    f->k  = (int64_t)floor(k * 1099511627776.0 + 0.5);
+}
+
+static void filter_write(sid_ref_t *s, unsigned reg, unsigned value)
+{
+    sid_filter_t *f = &s->flt;
+
+    switch (reg) {
+    case 0: f->fc = (f->fc & 0x7f8) | (value & 7); filter_coeffs(s); break;
+    case 1: f->fc = ((value << 3) & 0x7f8) | (f->fc & 7); filter_coeffs(s); break;
+    case 2: f->res = value >> 4; f->filt = value & 0x0f; filter_coeffs(s); break;
+    case 3: f->mode = value >> 4; f->vol = value & 0x0f; break;
+    }
+}
+
+/* One-pole TPT low-pass, g in Q40 (the external filter's two poles). */
+static int64_t onepole(int64_t *state, int64_t x_q24, int64_t gain_q40)
+{
+    int64_t v = (int64_t)(((__int128)(x_q24 - *state) * gain_q40) >> 40);
+    int64_t y = v + *state;
+
+    *state = y + v;
+    return y;
+}
+
+/* Mix the three voice outputs: routed voices through the SVF, the rest past
+ * it, times the volume, then the external filter; 16-bit chip output scale. */
+static int32_t mix_output(sid_ref_t *s, const int32_t vo[3])
+{
+    sid_filter_t *f = &s->flt;
+    int64_t direct = 0, x = 0, filtered = 0, mixed, y;
+    int64_t v3, v1, v2, hp;
+    int i;
+
+    for (i = 0; i < 3; i++) {
+        if (f->filt & (1 << i)) x += vo[i];
+        else if (!(i == 2 && (f->mode & 8))) direct += vo[i];       /* voice 3 off */
+    }
+
+    /* TPT SVF, Zavalishin: states Q24, coefficients Q40. */
+    v3 = Q24(x) - f->s2;
+    v1 = (int64_t)(((__int128)f->a1 * f->s1 + (__int128)f->a2 * v3) >> 40);
+    v2 = f->s2 + (int64_t)(((__int128)f->a2 * f->s1 + (__int128)f->a3 * v3) >> 40);
+    f->s1 = 2 * v1 - f->s1;
+    f->s2 = 2 * v2 - f->s2;
+    /* The summer's finite gain leaves the chips' high-pass leaky: the low-pass
+     * term cancels the input only to HP_LEAK_Q16 (measured on reSID). */
+    hp = Q24(x) - (int64_t)(((__int128)f->k * v1) >> 40)
+       - (int64_t)(((__int128)v2 * hp_cancel_q16[s->model]) >> 16);
+
+    if (f->mode & 1) filtered += v2;
+    if (f->mode & 2) filtered += v1;
+    if (f->mode & 4) filtered += hp;
+
+    mixed = direct + (int64_t)(((__int128)(filtered >> 24) * filter_gain_q12[s->model]) >> 12);
+    mixed = (mixed * (int64_t)f->vol * mix_k_q24[s->model]) >> 24;    /* 16-bit chip scale */
+
+    /* external filter: vo = lp(16 kHz)(mixed) - lp(16 Hz)(lp(16 kHz)(mixed)) */
+    y = onepole(&f->xl_s, Q24(mixed), EXT_LP_G_Q40);
+    return (int32_t)((y - onepole(&f->xh_s, y, EXT_HP_G_Q40) + (1 << 23)) >> 24);
+}
+
 void sid_ref_frame(sid_ref_t *s, sid_frame_t *f)
 {
     int i;
@@ -698,4 +807,5 @@ void sid_ref_frame(sid_ref_t *s, sid_frame_t *f)
         f->naive[i] = voice_output(s, &s->v[i]);
         f->bl[i] = voice_output_bl(s, &s->v[i], &s->v[(i + 2) % 3], s->eps);
     }
+    f->mix = mix_output(s, f->bl);
 }
