@@ -406,7 +406,8 @@ fr_osc_loop:                            ; oscillators, split at every sync-sourc
         jsr     outstage_1
         jsr     outstage_2
         jsr     mix_frame
-
+        ; profiling mark: the frame is computed, the replies follow
+fr_done:
         move    x:V0_OUT,a              ; the three voice outputs
         jclr    #1,x:m_hsr,*
         movep   a1,x:m_htx

@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Measure DSP56001 cycles between two labels with Hatari's DSP profiler.
 
-  profile_dsp.py prepare --listing X.LST --output-dir DIR --start LABEL --end LABEL
+  profile_dsp.py prepare --listing X.LST --output-dir DIR --start LABEL --end LABEL [--hit N]
       writes Hatari debugger scripts: a DSP breakpoint at LABEL `start` that
       switches the DSP profiler on and a second one at `end` that saves the
       profile and switches it off. Run Hatari with `--parse DIR/start.ini`.
+      --hit N profiles the N-th pass through `start` (a frame in the middle of a run).
 
   profile_dsp.py report --listing X.LST --profile DIR/profile.txt [--frames N --rate HZ]
       summarises the saved profile per label: instruction cycles (Hatari
@@ -61,14 +62,15 @@ def symbol(symbols, space: str, name: str) -> int:
     return symbols[(space, name)]
 
 
-def prepare(listing: Path, out: Path, start: str, end: str) -> None:
+def prepare(listing: Path, out: Path, start: str, end: str, hit: int = 1) -> None:
     sym = parse_listing(listing)
     a, b = symbol(sym, "P", start), symbol(sym, "P", end)
     out.mkdir(parents=True, exist_ok=True)
     begin = (out / "begin.ini").resolve()
     finish = (out / "end.ini").resolve()
     profile = (out / "profile.txt").resolve()
-    (out / "start.ini").write_text(f"db pc = ${a:04x} :once :trace :file {begin}\n")
+    count = f" :{hit}" if hit > 1 else ""
+    (out / "start.ini").write_text(f"db pc = ${a:04x}{count} :once :trace :file {begin}\n")
     begin.write_text(f"dp on\ndb pc = ${b:04x} :once :trace :file {finish}\n")
     finish.write_text(f"dp save {profile}\ndp off\n")
 
@@ -133,6 +135,7 @@ def main() -> None:
     p.add_argument("--output-dir", type=Path, required=True)
     p.add_argument("--start", required=True)
     p.add_argument("--end", required=True)
+    p.add_argument("--hit", type=int, default=1, help="profile the N-th pass through --start")
     r = sub.add_parser("report")
     r.add_argument("--listing", type=Path, required=True)
     r.add_argument("--profile", type=Path, required=True)
@@ -141,7 +144,7 @@ def main() -> None:
     r.add_argument("--rate", type=float, default=25175000 / 512)
     a = ap.parse_args()
     if a.cmd == "prepare":
-        prepare(a.listing, a.output_dir, a.start, a.end)
+        prepare(a.listing, a.output_dir, a.start, a.end, a.hit)
     else:
         report(a.listing, a.profile, a.output, a.frames, a.rate)
 

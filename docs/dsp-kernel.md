@@ -178,7 +178,18 @@ for every other command.
 
 ## Next
 
-0. Measure the voices' share of the frame budget (profile a whole run, not one call).
+0. **The kernel is about 3.3 times over the real-time budget.** Profiling single frames from the
+   middle of the `filt_3` gate run (`profile_dsp.py prepare --start cmd_frame --end fr_done
+   --hit N`, frames 200 to 27,000) gives 887 to 1,222 DSP cycles per frame (mean about
+   1,070) against 326 at 49.17 kHz. `mix_frame` is 83 of that; the rest is the three voices
+   (envelope, oscillator clocking split at sync toggles, noise, combined waveforms, output
+   stage; the biggest single items are `wcore_noring` about 40 cycles per voice,
+   `wave_post`, `wk_shift_loop` and `sync_check`) plus 75 in `cmd_frame` itself. The
+   kernel is the exact model of the chip, built bit-exact first; it needs about a factor
+   three, from some mix of: skipping idle units (a silent voice or no-op envelope), a
+   fast path for the plain waveforms (triangle, saw, pulse with no sync, ring, test or
+   noise), keeping the noise register and combined tables lazy, and a lower codec rate
+   (32.8 kHz needs 488 cycles, 24.6 kHz 650). Each cut is gated against the reference.
 1. The 68030 side of the coefficients: `sid_filter_coeffs()` in m68k assembly, gated
    against the C routine, and the tables (about 16 KB per model) in the executable.
 2. Band-limited output (sample-instant phase, polyBLEP-4) in front of the mixer
