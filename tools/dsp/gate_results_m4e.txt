@@ -1,0 +1,52 @@
+/private/tmp/claude-501/-Users-saschaspringer-Work-F030SID/b400cfc9-0c97-4c4f-a383-568a4f6bb502/scratchpad/venv/bin/python tools/dsp/voice_dsp_gate.py --build build --make-vec build/ref/make_vec \
+		--vasm build/tools/vasm/vasmm68k_mot --vlink build/tools/vlink/vlink --hatari /Users/saschaspringer/Work/F030Arcade/third_party/hatari/build/src/hatari \
+		--tos third_party/f030dsp3d/tools/tos402.rom --vbls 6000 music_1 music_2 filt_1 filt_2 filt_4 filt_6 rand_1 rand_3 rand_5 rand_7 rand_8 sync_ring noise adsr_bug dsp2_1 dsp2_6 dsp2_10 dsp_3 dsp_7 tone_saw_1873 tone_saw_64720 tone_tri_34190 tone_pulse_7509 | tee build/dsp-gate-results.txt
+trace              model  frames  result
+music_1             6581   29944  identical
+music_1             8580   29944  identical
+music_2             6581   29944  identical
+music_2             8580   29944  identical
+filt_1              6581   29944  identical
+filt_1              8580   29944  identical
+filt_2              6581   29944  identical
+filt_2              8580   29944  identical
+filt_4              6581   29944  identical
+filt_4              8580   29944  identical
+filt_6              6581   29944  identical
+filt_6              8580   29944  identical
+rand_1              6581   29944  identical
+rand_1              8580   29944  identical
+rand_3              6581   29944  identical
+rand_3              8580   29944  identical
+rand_5              6581   29944  identical
+rand_5              8580   29944  identical
+rand_7              6581   29944  identical
+rand_7              8580   29944  identical
+rand_8              6581   29944  identical
+rand_8              8580   29944  identical
+sync_ring           6581   34935  identical
+sync_ring           8580   34935  identical
+noise               6581   33937  identical
+noise               8580   33937  identical
+adsr_bug            6581   24954  identical
+adsr_bug            8580   24954  identical
+dsp2_1              6581   24954  identical
+dsp2_1              8580   24954  identical
+dsp2_6              6581   24954  identical
+dsp2_6              8580   24954  identical
+dsp2_10             6581   24954  identical
+dsp2_10             8580   24954  identical
+dsp_3               6581   24954  identical
+dsp_3               8580   24954  identical
+dsp_7               6581   24954  identical
+dsp_7               8580   24954  identical
+tone_saw_1873       6581   27948  identical
+tone_saw_1873       8580   27948  identical
+tone_saw_64720      6581   27948  identical
+tone_saw_64720      8580   27948  identical
+tone_tri_34190      6581   27948  identical
+tone_tri_34190      8580   27948  identical
+tone_pulse_7509     6581   27948  identical
+tone_pulse_7509     8580   27948  identical
+
+PASS

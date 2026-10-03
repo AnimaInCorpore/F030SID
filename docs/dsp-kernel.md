@@ -178,22 +178,39 @@ for every other command.
 
 ## Next
 
-0. **The kernel is still about 2.2 times over the real-time budget** (was 3.3). Per codec frame
-   (`tools/dsp/profile_frames.py`, six frames sampled through a gate run): steady tone 706 cycles
-   (was 1,102), noise 714 (1,115), the random-register stress traces 920-1,130 (was 1,070-1,350);
-   the budget is 326 at 49.17 kHz. What was done, each step gated bit for bit:
+0. **The kernel is still over the real-time budget at 49.17 kHz, by about 1.6 times on music.**
+   Measured with `tools/dsp/profile_frames.py` (six whole frames sampled through a gate run; the
+   budget is 326 cycles per frame at 49.17 kHz, 488 at 32.8 kHz, 650 at 24.6 kHz):
+
+   | trace | first version | now |
+   | --- | --- | --- |
+   | `music_1` (tracker-style, no filter) | 756 | 515 |
+   | `music_2` (the same with a filter sweep) | 805 | 564 |
+   | `tone_saw_7509` (AD=0, an extreme envelope) | 1,102 | 670 |
+   | `rand_*` (random registers: every combined waveform, sync, ring) | 1,070-1,350 | 920-1,130 |
+
+   The `music_*` traces are the realistic target (pulse arpeggio with PWM and vibrato, saw bass,
+   triangle/noise drums, typical ADSR values); the tone and random traces are stress cases. What
+   was done, each step gated bit for bit against the reference:
    - envelope: a frame with no rate step is a short counter update; a frame whose steps change
-     nothing (idle at the sustain level, or held at zero) is applied in closed form; the general
-     step loop skips the exponential-period lookup when the envelope value did not change;
-   - oscillator: the noise-register step test is a single predicate for the usual delta, the pulse
-     compare uses a stored `pw << 12` and a conditional transfer instead of a 12-bit shift and a branch;
-   - frame: when no voice has sync set, the sync search and bookkeeping and the split loop are skipped.
-   What is left (typical tone): oscillator clock and output stage about 75 + 70, the envelope
-   about 200 (an AD=0 test tone steps it two or three times a frame; ordinary envelopes less),
-   mixer and filter 76, pulse 40, frame bookkeeping 40. Next candidates: parallel moves through
-   per-voice pointer registers (the mixer went 130 -> 83 that way), the multiplier as a shifter
-   (`acc >> 12`), a computed jump for the waveform, a table for the noise bit gather, packed flags;
-   then, if it is still over, a lower codec rate (32.8 kHz needs 488 cycles, 24.6 kHz 650).
+     nothing (idle at the sustain level, or held at zero) is applied in closed form;
+   - oscillator: the noise-register step test is one predicate for the usual delta; the pulse
+     compare uses a stored `pw << 12` and a conditional transfer;
+   - frame: with no sync bit set anywhere, the sync search and the split loop are skipped;
+   - memory: each voice's 16 hot variables sit in X short addresses (one word, fusable into
+     parallel moves) and its 22 cold ones in Y memory (`gen_sid_asm.py`);
+   - output: the waveform-code routine is chosen when the control register is written
+     (`set_handler`): plain triangle, saw, pulse and noise run short handlers; combined
+     waveforms, ring-modulated triangle and no waveform keep the general path.
+
+   Where music_1's 515 cycles go: oscillator clock, msb, noise step and pulse about 170; DAC and
+   output stage about 110; envelope about 80; frame bookkeeping 40; mixer 50 (110 with the
+   filter routed). Left on the table, roughly 60-80 cycles: a no-sync oscillator variant that
+   skips the msb, fusing the remaining moves, a reserved pointer for the wave DAC. That brings
+   music to about 440-480: out of reach of 326, inside 488. The honest choices are therefore a
+   codec rate of 32.8 kHz (prescale 2; sid-feasibility.md argues for 49.17 kHz because of
+   aliasing, which polyBLEP largely answers) or giving up exactness somewhere (lazy noise register,
+   approximate envelope), each of which needs a listening test.
 1. The 68030 side of the coefficients: `sid_filter_coeffs()` in m68k assembly, gated
    against the C routine, and the tables (about 16 KB per model) in the executable.
 2. Band-limited output (sample-instant phase, polyBLEP-4) in front of the mixer
