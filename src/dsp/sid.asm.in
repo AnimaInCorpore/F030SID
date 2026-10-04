@@ -1160,10 +1160,13 @@ envs:                                   ; b = S_REM - n <= 0: minus the cycles l
         move    y:<S_RATEPER,x1
         jmp     (r1)
 
-eh_hold:                                ; frozen at zero, or resting at the sustain level: only the rate counter runs
-        add     x1,b
-        jle     <eh_hold
-        move    x1,y:<S_CREF
+eh_hold:                                ; frozen at zero, or resting at the sustain level: only the rate counter
+        move    x1,y:<S_CREF            ; and the exponential counter run. 240 steps leave both where they
+        move    #>120,x0                ; are (the exponential period is 1, 2, 4, 8, 16 or 30), so they are
+        mpy     x1,x0,a                 ; taken at once; env_unpark gives back the ones a register write
+        move    a0,a                    ; finds not yet due
+        add     a,b
+        bset    #1,y:<S_HOLD
         move    x:<S_FREQE,x0
         rts
 envret: move    x1,y:<S_CREF
@@ -1189,8 +1192,7 @@ eh_decsus:
         move    y:<S_SUSP,x0
         cmp     x0,a
         jne     <ed_run
-        jclr    #0,y:<S_EXPPER,ed_run
-        move    #>eh_hold,x0            ; at the sustain level with exponential period 1 a step changes nothing:
+        move    #>eh_hold,x0            ; at the sustain level a step only turns the exponential counter:
         move    x0,y:<S_EH              ; the steps take the short way until a register write (env_handler)
         jmp     <eh_hold
 ed_run: move    y:<S_EXPREM,a
@@ -1296,6 +1298,53 @@ env_handler:                            ; S_EH for the pipeline, hold and state
         move    #>eh_release,x0
 eh_set: move    x0,y:<S_EH
         rts
+
+; eh_hold took 240 steps at once (S_HOLD bit 1); q = (S_REM - 1) / period of them are not due yet. Take them
+; back: S_REM -= q * period, and the exponential counter turns back q steps. Keeps y1.
+env_unpark:
+        jclr    #1,y:<S_HOLD,eup_x
+        bclr    #1,y:<S_HOLD
+        move    x:<S_REM,a
+        move    #>1,x0
+        sub     x0,a
+        move    a1,x1
+        move    #>$8000,y0
+        mpy     x1,y0,a                 ; (S_REM - 1) << 16
+        move    y:<S_RATEPER,x0
+        and     #$fe,ccr
+        rep     #9
+        div     x0,a                    ; a0 = q, 8 bits
+        move    a0,a
+        move    #>$1ff,x1
+        and     x1,a
+        move    a1,x1
+        mpy     x1,x0,b
+        asr     b
+        move    b0,b                    ; q * period
+        move    x:<S_REM,a
+        sub     b,a
+        move    a1,x:<S_REM
+        move    y:<S_EXPPER,x0          ; steps left = (steps left - 1 + q) mod period + 1
+        move    y:<S_EXPREM,a
+        add     x1,a
+        move    #>1,y0
+        sub     y0,a
+        move    #>30,b
+        cmp     x0,b
+        jeq     eup_30
+        move    x0,b                    ; a power of two
+        sub     y0,b
+        move    b1,x0
+        and     x0,a
+        jmp     eup_set
+eup_30: cmp     x0,a
+        jlt     eup_set
+        sub     x0,a
+        jmp     eup_30
+eup_set:
+        add     y0,a
+        move    a1,y:<S_EXPREM
+eup_x:  rts
 
 env_desync:                             ; S_RATECNT = the rate counter, S_REM = 0
         move    y:<S_CREF,a
@@ -1784,6 +1833,7 @@ wr_ad:
         move    #>$f,x0
         and     x0,a
         move    a1,y:S_DECAY
+        jsr     env_unpark
         move    y:<S_STATE,a
         tst     a
         jne     wad_notatk
@@ -1810,6 +1860,7 @@ wr_sr:
         asl     a
         bset    #9,a1
         move    a1,y:<S_SUSP
+        jsr     env_unpark
         jsr     env_handler             ; (a voice resting at the old level may decay again)
         move    y1,a
         move    #>$f,x0
@@ -1920,6 +1971,7 @@ wc_handler:
         cmp     x0,a
         jeq     wr_done
         jset    #1,y:<S_PIPE,wc_desynced
+        jsr     env_unpark
         jsr     env_desync              ; the rate counter as a number: the period is about to change
 wc_desynced:
         move    y:S_TMPA,a
