@@ -212,7 +212,9 @@ in runs, until 768 words (384 frames, 7.8 ms) wait. Register writes arrive with
   $15-$17;
 - `DSP_CMD_STREAM_READ index` returns the render clock, a checksum over the
   rendered frames, the least ring fill, the queue level, the number of times the
-  transmitter overtook the renderer and the SSI underrun flag.
+  transmitter overtook the renderer and the SSI underrun flag. An overtake is seen
+  as a fill above what the last run can have left, at the next step or, when the
+  host's call ends a run early, at that point (`ss_break`).
 
 `make stream-gate` (`tools/dsp/stream_gate.py`, `src/m68k/streamtest.s`) plays
 traces this way under the calibrated Hatari, feeding one PAL frame of writes at a
@@ -220,9 +222,10 @@ time from the 200 Hz tick as the player will: clock and checksum must equal the
 reference's, the transmitter must never overtake, and the run must take the
 frames' playing time. Results (`tools/dsp/stream_gate_results.txt`, both models):
 the music and tone traces are identical and in real time (the ring never falls
-below 627 of 768 words); `noise` is identical and only just in real time (the ring
-runs down to 1 word); the stress traces (`filt_3`, `rand_1`, `rand_2`,
-`sync_ring`) are identical but 5-40% slower than real time. The stream adds about 50 cycles per frame to the synthesis numbers
+below 627 of 768 words); `noise` is identical and not quite in real time (the ring
+runs down to a few words and the transmitter overtakes once, which the counter did
+not see before `ss_break` checked; it is a stress trace now); the stress traces
+(`filt_3`, `rand_1`, `rand_2`, `sync_ring`) are identical but 5-40% slower than real time. The stream adds about 50 cycles per frame to the synthesis numbers
 below (ring write, checksum, horizon and queue countdowns, two transmit
 interrupts).
 
@@ -267,6 +270,28 @@ for every other command.
    the frames near an edge. Where to get it back, if needed: the out-of-line correction
    (`bl_corr`: an 11-bit shift and a 16-bit `DIV` per edge), the stream's checksum (a gate aid,
    11 cycles), the sync loop.
+
+   **Real tunes cost more** (2026-10-04; `tools/dsp/profile_stream.py`, the DSP profiler over
+   100,000 frames of a player run, everything included: synthesis, stream loop, interrupts,
+   register writes, host commands). Cycles per frame, frames 250,000-350,000 of each tune:
+
+   | | Wizball | Monty on the Run |
+   | --- | ---: | ---: |
+   | total (budget 326) | 375 | 470 |
+   | polyBLEP out of line (`bc_abs`, `blp_*`, `bl_*`) | 55 | 165 |
+   | mixer and filters (`vbend` = `mix_frame`, `mx_tail`) | 79 | 41 |
+   | frame set-up (`fr_n`, `frame`) | 51 | 51 |
+   | stream loop and transmit interrupt (`ss_*`, `main_loop`, `p_0010/11`) | 54 | 67 |
+   | waveform handlers (`hpulse`, `hbl`, `hblm`, `hplain`, `hfloat`) | 52 | 55 |
+   | oscillator events and noise (`oscs`, `os_*`, `og_*`, `shift`, `sh_*`) | 17 | 45 |
+   | `cmd_stream_push` (Wizball writes the cutoff every frame: nine entries each) | 19 | 2 |
+   | envelopes (`eh_hold`, `envs`) | 16 | 3 |
+
+   So the edge correction is the first thing to make cheaper (`bc_abs` alone is 58 cycles per
+   frame in Monty: an 11-bit `rep asl` and a 16-step `DIV` per edge, for high pulse voices with
+   an edge in most frames), then the stream loop (37 of its cycles are the per-frame body under
+   `ss_room`), then the frame set-up. The synthetic `music_*` traces have low voices and few
+   edges, which is why they came out at 220-234.
 
    How the frame is built (`sid.asm.in`, all gated bit for bit, `tools/dsp/gate_results_rt.txt`):
    - phase: one 48-bit word `acc << 12` (X = the 12-bit waveform index, Y = the rest), advanced

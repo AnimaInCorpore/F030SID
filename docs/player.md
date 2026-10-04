@@ -37,10 +37,10 @@ the reference's on every PSID tune, but real time is held by three only.
 | RoboCop 3 | 8580 | 49.06 s | 260 | 0 |
 
 So the kernel's mean cost on real music is 100-165% of the frame, not the 85% of
-the synthetic `music_*` traces. The overtake counter undercounts (a lap during a
-run that ends through `ss_break` is lost when `G_LAST` is rewritten), the elapsed
-time is the reliable figure. Where the time could come from: see "After the
-kernel existed" in `scummvm-opl-hints.md`.
+the synthetic `music_*` traces. The overtake counts above are too low (a lap during a
+run that the host's call ended was not seen; fixed since: Wizball counts 713, Monty
+on the Run 401), the elapsed time is the reliable figure. Where the time goes: the profile of two tunes in
+`dsp-kernel.md` (Cost); ideas from the OPL kernel in `scummvm-opl-hints.md`.
 
 These runs also found a rounding difference: the DSP's `rnd` on the output word
 rounds an exact tie to even, the reference rounded it up. It showed after 7.6 s of

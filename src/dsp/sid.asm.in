@@ -685,7 +685,18 @@ ss_break:
         sub     x0,a
         move    #>RING_WORDS-1,x0
         and     x0,a
-        move    a1,x:G_LAST
+        move    a1,a
+        move    x:G_PRIMED,b
+        tst     b
+        jeq     ss_bok
+        move    x:G_LAST,x0             ; more than the whole run would have left: the transmitter
+        cmp     x0,a                    ; wrapped past the write pointer during the run
+        jle     ss_bok
+        move    x:G_UNDER,b
+        move    #>1,x1
+        add     x1,b
+        move    b1,x:G_UNDER
+ss_bok: move    a1,x:G_LAST
 ss_wrap:
         move    x:G_WP,a                ; the write pointer wraps at the ring's end
         move    #>RING_BASE+RING_WORDS,x0
