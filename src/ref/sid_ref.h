@@ -91,7 +91,10 @@ typedef struct {
 typedef struct {
     int32_t a1, a2, a3;           /* TPT coefficients, Q23 */
     int32_t k4;                   /* k = 1/Q divided by 4, Q23 */
+    int32_t wl, wb, wh;           /* the low-pass, band-pass and high-pass outputs' gains / 2, Q23 */
+    int32_t wleak;                /* the low-pass share in the high-pass output (times its gain) / 2, Q23, signed */
 } sid_filter_coeffs_t;
+#define SID_FILTER_COEFF_WORDS 8
 
 typedef struct {
     int64_t s1, s2;               /* SVF integrator states, Q24 (48-bit on the DSP) */
@@ -136,7 +139,8 @@ int32_t sid_wave_zero(sid_model_t model);
 int32_t sid_floating_ttl_start(sid_model_t model);
 
 /* The per-model constants the DSP is configured with (words of the mixer and filter
- * stages): high-pass cancellation Q23, mixer scale Q23, filter path gain Q21. */
+ * stages): a reserved word (once the high-pass cancellation), mixer scale Q23, filter
+ * path gain Q22 (1.0: the outputs' gains travel with the coefficients). */
 void sid_mix_config(sid_model_t model, int32_t *hp_cancel, int32_t *mix_k, int32_t *filter_gain);
 
 /* Host-side derivation of the filter coefficient words (table lookups, no divide). */

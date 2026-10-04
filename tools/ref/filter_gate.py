@@ -3,10 +3,17 @@
 
 The filter is not bit-exact (reSID integrates an analog model at 985 kHz, the
 reference a TPT filter at 49 kHz); the gate is the response error. The same
-bandlimited-noise voice (bit-exact in both) is routed through the filter in each
-mode / cutoff / resonance, reSID's chip output is taken per cycle and low-passed
-to the codec grid, and the Welch spectra of both outputs are compared in dB
-over 100 Hz - 12 kHz wherever reSID's output is 10 dB above its own floor.
+noise voice (bit-exact in both) is routed through the filter in each mode /
+cutoff / resonance, reSID's chip output is taken per cycle and low-passed to the
+codec grid, and the Welch spectra are compared in dB over 100 Hz - 12 kHz
+wherever reSID's output is 10 dB above its own floor.
+
+What is compared is the filter path's response: each spectrum divided by the
+spectrum of the same voice routed past the filter. That takes the stimulus out:
+the model samples the voice once per frame, so the noise above the codec's
+Nyquist frequency aliases into its output (and reSID's averaged output droops),
+which is the oscillators' business, not the filter's. The unfiltered path's own
+level error is printed first ("direct").
 
 Usage: filter_gate.py [--build build/ref] [--quick]
 """
@@ -71,6 +78,15 @@ def main():
         cases = [c for c in cases if c[3] == 1300 and c[4] in (0, 15)]
     print(f"{'chip':<6}{'mode':<7}{'fc':>6}{'res':>5}{'mean dB':>9}{'rms dB':>8}{'worst dB':>9}")
     rows = []
+    direct = {}
+    for model in ("6581", "8580"):
+        tr = os.path.join(out, "f.trace")
+        trace_for(tr, 0, 0, 0, 0)
+        f, pc, pr = spectra(args.build, model, tr, os.path.join(out, "f"))
+        direct[model] = (pc, pr)
+        band = (f > 100) & (f < 12000)
+        d = 10 * np.log10(pr[band] / pc[band])
+        print(f"{model:<6}{'direct':<7}{'':>6}{'':>5}{d.mean():>9.2f}{np.sqrt((d ** 2).mean()):>8.2f}{np.abs(d).max():>9.2f}")
     for model, name, mode, fc, res in cases:
         tr = os.path.join(out, "f.trace")
         trace_for(tr, fc, res, 1, mode)
@@ -80,7 +96,7 @@ def main():
         # reference does not reproduce: grade only bins 10 dB above it.
         floor = np.percentile(pc[band], 3)
         sel = band & (pc > 10 * floor)
-        d = 10 * np.log10(pr[sel] / pc[sel])
+        d = 10 * np.log10((pr[sel] / direct[model][1][sel]) / (pc[sel] / direct[model][0][sel]))
         mean, rms, worst = d.mean(), np.sqrt((d ** 2).mean()), np.abs(d).max()
         print(f"{model:<6}{name:<7}{fc:>6}{res:>5}{mean:>9.2f}{rms:>8.2f}{worst:>9.2f}")
         rows.append((model, name, rms))

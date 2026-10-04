@@ -20,6 +20,7 @@ DSP_Y_WORDS     equ     8192
 DSP_ABILITY     equ     3
 MAX_FRAMES      equ     40000
 WORDS_PER_FRAME equ     4
+COEF_WORDS      equ     DSP_FILTER_WORDS
 
 DSP_HOST_ISR    equ     $ffffa202
 DSP_HOST_DATA   equ     $ffffa204
@@ -143,7 +144,7 @@ ev_loop:
         lea     12(a0),a2
         bsr     send_coef
 ev_next:
-        lea     28(a0),a0
+        lea     12+4*COEF_WORDS(a0),a0
         bra.s   ev_loop
 ev_done:
         move.l  #DSP_CMD_FRAME,d0
@@ -161,11 +162,11 @@ frame_out:
         movem.l (sp)+,d0-d7/a0-a6
         rts
 
-; a2 -> four longs (a1, a2, a3, k4): DSP_CMD_FILTER
+; a2 -> the coefficient words: DSP_CMD_FILTER
 send_coef:
         move.l  #DSP_CMD_FILTER,d0
         bsr     dsp_put
-        moveq   #3,d3
+        moveq   #COEF_WORDS-1,d3
 sc_loop:
         move.l  (a2)+,d0
         and.l   #$ffffff,d0

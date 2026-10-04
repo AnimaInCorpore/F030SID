@@ -1,4 +1,17 @@
-# The SID player (plan)
+# The SID player
+
+**Status.** `release/f030sid.ttp` (`src/m68k/player.s`) plays PSID files:
+`F030SID.TTP tune.sid [song] [-m 6581|8580] [-t seconds] [-v]`, or the same line
+from `AUTOPLAY.INF`. The 68030 runs the tune's 6510 code (`cpu6502.s`, `psid.s`),
+derives the filter coefficient words (`filtcoef.s`) and feeds the DSP kernel's
+stream a couple of PAL frames ahead of its render clock; a key stops. The end to
+end gate (`make play-gate`) is bit-exact against the reference models and in
+real time under the calibrated Hatari; what the 6510 side does and does not
+emulate is in `tools/player/README.md` (no ROMs, CIA, VIC or interrupts: PSID
+tunes with a play routine at a fixed rate; no RSID, no interrupt-driven digis,
+PAL only, one SID). Not yet there: fade-out and song lengths, a display beyond
+title and author, tune selection while playing. Nothing has run on a real
+Falcon. The rest of this document is the original plan.
 
 Two TOS programs are needed. `voicetest.tos` (done) is the test harness: it
 feeds trace vectors to the DSP kernel and dumps the output so the gate can

@@ -73,33 +73,49 @@ Findings from building the gate, relevant to the DSP design:
 chip output (16-bit scale) per codec frame, fed with the band-limited voices:
 
 - routing (`$17` low nibble), voice 3 off, mode bits LP/BP/HP, volume `$18`;
-- a TPT state-variable filter (Zavalishin) with 48-bit states and Q40
-  coefficients, `g = tan(pi f0 / fs)` and `k = 1/Q` looked up per `fc` / `res`
-  from `filter_tables.h` (the 68030 derives `a1 a2 a3` on a register write);
+- a TPT state-variable filter (Zavalishin) with 48-bit states: `g = tan(pi f0 / fs)`
+  and `k = k0(fc) * kr(res)` from `filter_tables.h` (the 68030 derives the words
+  `a1 a2 a3 k/4` on a register write), three outputs lp, bp, hp, each with its own
+  gain per cutoff, and a share of lp in the high-pass output;
 - the external filters, a 15.9 kHz low-pass and a 15.9 Hz high-pass, one-pole TPT;
-- gain staging calibrated on reSID (`mix_cal`, `oracle_resid cal`): the mixer
-  scale per model, the 6581's filter-path attenuation (0.70, the 8580's is
-  1.03), and a small high-pass leak on the 6581 (its summer does not cancel the
-  low-pass term completely).
+- the mixer scale per model, calibrated on reSID (`mix_cal`, `oracle_resid cal`).
 
-The 6581/8580 cutoff and resonance curves are measured from reSID, not derived:
-`tools/ref/filter_measure.py` drives white noise into reSID's external input,
-fits a two-pole low-pass (f0, Q) per `fc` and the Q ratio per `res`, and
-`tools/ref/gen_filter_tables.py` turns that into `filter_tables.h`.
+The filter's parameters are measured from reSID, not derived:
+`tools/ref/filter_fit.py` routes a full-level noise voice through reSID's filter
+for 65 cutoffs, four resonances and each of the three outputs, divides the chip
+output's spectrum by that of the voice routed past the filter, and fits f0, k0,
+the three gains and the leak per cutoff jointly on all three outputs (the damping
+ratio per resonance from three cutoffs and all 16 settings).
+`tools/ref/gen_filter_tables.py` turns `filter_fit_<model>.txt` and
+`filter_q_<model>.txt` into `filter_tables.h`. What the fit found: the 8580 is a
+clean two-pole filter with f0 linear in fc up to about 15.5 kHz and gains near
+1.1; the 6581 sits at 240 Hz up to fc 250, rises steeply between fc 400 and 900,
+and reaches 15 kHz; its high-pass output has about half the low-pass's gain
+below fc 1400, and its band-pass output up to 1.7 times at the top.
 
 `make filter-gate` (`tools/ref/filter_gate.py`) routes the same noise voice
-(bit-exact in both) through each mode, cutoff and resonance and compares the
-Welch spectra of reSID's chip output and the reference over 100 Hz - 12 kHz,
-in bins 10 dB above reSID's own floor. Results: `tools/ref/filter_gate_results.txt`.
-Mean rms error per mode: low-pass about 2 dB, band-pass 4, notch 4, high-pass 6.
+(bit-exact in both) through each mode, five cutoffs and three resonances and
+compares the filter path's response (the output spectrum over that of the voice
+routed past the filter, so the stimulus and its aliasing cancel) of reSID and the
+reference over 100 Hz - 12 kHz, in bins 10 dB above reSID's own floor. Results
+(`tools/ref/filter_gate_results.txt`), mean rms error per mode, against the
+previous tables (one two-pole fit of the low-pass output, fixed gains) graded
+the same way:
 
-Known gaps, in order of size: the 6581 below fc ~ 750 is not a two-pole filter
-(its roll-off is about 7 dB/octave and a two-pole fit is 10-20 dB too steep);
-6581 high-pass and band-pass at high cutoff are not the low-pass's f0 (reSID's
-LP fit says 15-20 kHz, its HP peaks near 7 kHz) so those modes are off by
-10-16 dB around the peak; reSID's low-frequency floor in HP/BP/notch modes
-(dither and finite-gain summers) is not reproduced; the 6581's filter
-distortion is not modelled.
+| | low-pass | band-pass | high-pass | notch | all |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| before | 2.1 | 3.9 | 5.3 | 3.9 | 3.8 dB |
+| now | 1.2 | 1.7 | 0.7 | 2.8 | 1.6 dB |
+
+Known gaps: the 6581 between fc 400 and 900 (the fit is 3-5 dB off in the
+low-pass there: the response depends on the resonance in a way k0 * kr does not
+capture, and the damping runs into the k < 4 limit of the coefficient word); the
+6581's band-pass at high cutoff (3-5 dB); the notch (the two outputs' phases
+matter there); everything is fitted at one signal level, so the 6581's
+level-dependent cutoff (its distortion) is frozen at that level and the
+distortion products themselves are not modelled. The unfiltered path is 2-3 dB
+louder than reSID's box-averaged output towards 10 kHz in this test: that is the
+aliasing of the frame-sampled noise voice, not the mixer.
 
 ## Model scope
 

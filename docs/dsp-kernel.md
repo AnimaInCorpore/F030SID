@@ -61,8 +61,11 @@ Milestone 4 added the mixer, the state-variable filter and the external filter
   multiplication is one MPY/MAC and the fraction is only carried in the
   accumulate. The routed voices enter divided by four for the resonance
   headroom (`x = sum >> 2`, +-2^22 against the 2^23 limit);
-- the high-pass term is `x - 4*(k/4)*bp - cc*lp`, `cc` the per-model leak;
-- mixer: direct voices plus the filter path times its per-model gain, times
+- the high-pass term is `x - 4*(k/4)*bp - lp`; the selected outputs are summed with
+  weights the host sends with the coefficients (each output's gain per cutoff, and a
+  share of the low-pass in the high-pass output), set up when `$18` or the
+  coefficients change, so the frame multiplies as before;
+- mixer: direct voices plus the filter path, times
   `volume * scale` (computed on the DSP when `$18` is written), into the
   external filter (15.9 kHz and 15.9 Hz one-pole TPT, 48-bit states), rounded
   to the 16-bit chip scale; `FRAME` now returns that as a fourth word.
@@ -70,8 +73,8 @@ Milestone 4 added the mixer, the state-variable filter and the external filter
 The 68030 derivation of the coefficient words is `sid_filter_coeffs()` in
 `src/ref/sid_ref.c`: tables of `g`, `g*g` and `g*k0` per fc, `kr` per res, and a
 257-entry reciprocal table with linear interpolation, so no divide and two
-multiplies at most; the harness takes the words from the vector for now (the
-m68k port of the routine is the next step).
+multiplies at most; the 68030 routine is `src/m68k/filtcoef.s` (gated word for word,
+`make coef-gate`); the frame-by-frame harness still takes the words from its vector.
 
 Cost of the filter path: `mix_frame` measured 83 DSP cycles per codec frame
 with a voice routed through the filter (25% of the 326 cycles at 49.17 kHz), 29 of
@@ -184,7 +187,7 @@ in runs, until 768 words (384 frames, 7.8 ms) wait. Register writes arrive with
 - the horizon is the cycle below which frames may start; the host sends every
   write below horizon + 21 with it or before. The DSP never renders past it, so a
   late host costs audio continuity, not correctness;
-- pseudo registers 32-35 carry the filter coefficient words after a write to
+- pseudo registers 32-39 carry the filter's eight coefficient words after a write to
   $15-$17;
 - `DSP_CMD_STREAM_READ index` returns the render clock, a checksum over the
   rendered frames, the least ring fill, the queue level, the number of times the
@@ -202,13 +205,14 @@ than real time. The stream adds about 50 cycles per frame to the synthesis numbe
 below (ring write, checksum, horizon and queue countdowns, two transmit
 interrupts).
 
-## Protocol (v7)
+## Protocol (v8)
 
 `src/dsp/protocol.inc`: every command is a burst of 24-bit host words and gets
 exactly one reply word. `PING`, `WRITE_REG reg,value`, `READ_REG reg`, `RESET`,
 `LOAD_X addr,count,words...`, `LOAD_Y addr,count,words...`,
 `CONFIG zero,ttl,model,shift_reset_start,hp_cancel,mix_k,filter_gain` (filter gain Q22),
-`FILTER a1,a2,a3,k4` (the TPT coefficient words for the current fc and res),
+`FILTER a1,a2,a3,k4,wl,wb,wh,wleak` (the TPT coefficient words and the output gains for the
+current fc and res; pseudo registers 32-39 in the stream),
 `FRAME` (four reply words: the voice 1, 2 and 3 outputs and the chip output, each
 a 24-bit two's-complement word). v6: the host loads the envelope table as 512 words at
 `DSP_X_ENV_TAB` (per envelope value: DAC << 13, and the exponential counter period that starts
@@ -254,12 +258,10 @@ for every other command.
      loop; a cheap test against `S_THR` decides whether the exact toggle search is needed;
    - everything a normal frame executes is in internal P memory with short jumps, loads ride
      on ALU instructions as parallel moves, and the frame's constants come from short memory.
-1. The 68030 side of the coefficients: `sid_filter_coeffs()` in m68k assembly, gated
-   against the C routine, and the tables (about 16 KB per model) in the executable.
 2. Band-limited output (sample-instant phase, polyBLEP-4) in front of the mixer
    (the reference's `mix_bl` is the filter fed with it).
-3. Filter accuracy items against reSID: the 6581 below fc ~750 and its HP/BP at
-   high cutoff (`src/ref/README.md`).
-4. The player (PSID loader, 6502 core) on top of the stream.
+3. Filter: the response is within 1.6 dB rms of reSID's (`src/ref/README.md`); left are the
+   6581 between fc 400 and 900, and its distortion.
+4. The player exists (docs/player.md); its 6510 environment is minimal (no CIA/VIC/interrupts).
 5. Margin for the stress cases: hard sync between all voices with the fastest envelope rate,
    and random combined-waveform traffic, are 2-30% over real time in the stream.

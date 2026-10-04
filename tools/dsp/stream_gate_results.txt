@@ -1,23 +1,22 @@
 trace              model  result
-music_1             6581  identical, real time: 29944 frames in 0.61 s (playing time 0.61 s), least ring fill 743 of 768 words
-music_1             8580  identical, real time: 29944 frames in 0.61 s (playing time 0.61 s), least ring fill 743 of 768 words
-music_2             6581  identical, real time: 29944 frames in 0.61 s (playing time 0.61 s), least ring fill 715 of 768 words
-music_2             8580  identical, real time: 29944 frames in 0.61 s (playing time 0.61 s), least ring fill 715 of 768 words
-tone_saw_7509       6581  identical, real time: 27948 frames in 0.57 s (playing time 0.57 s), least ring fill 717 of 768 words
-tone_saw_7509       8580  identical, real time: 27948 frames in 0.57 s (playing time 0.57 s), least ring fill 717 of 768 words
-tone_pulse_1873     6581  identical, real time: 27948 frames in 0.57 s (playing time 0.57 s), least ring fill 716 of 768 words
-tone_pulse_1873     8580  identical, real time: 27948 frames in 0.57 s (playing time 0.57 s), least ring fill 716 of 768 words
-tone_tri_17250      6581  identical, real time: 27948 frames in 0.57 s (playing time 0.57 s), least ring fill 710 of 768 words
-tone_tri_17250      8580  identical, real time: 27948 frames in 0.57 s (playing time 0.57 s), least ring fill 710 of 768 words
-noise               6581  identical, real time: 33937 frames in 0.70 s (playing time 0.69 s), least ring fill 126 of 768 words
-noise               8580  identical, real time: 33937 frames in 0.70 s (playing time 0.69 s), least ring fill 126 of 768 words
-filt_3              6581  identical, NOT real time: 2 overtakes, SSI underrun flag 0: 29944 frames in 0.79 s (playing time 0.61 s), least ring fill 3 of 768 words
-filt_3              8580  identical, NOT real time: 1 overtakes, SSI underrun flag 0: 29944 frames in 0.74 s (playing time 0.61 s), least ring fill 8 of 768 words
-sync_ring           6581  identical, NOT real time: 2 overtakes, SSI underrun flag 0: 34935 frames in 0.79 s (playing time 0.71 s), least ring fill 1 of 768 words
-sync_ring           8580  identical, NOT real time: 2 overtakes, SSI underrun flag 0: 34935 frames in 0.79 s (playing time 0.71 s), least ring fill 1 of 768 words
-rand_1              6581  identical, NOT real time: 1 overtakes, SSI underrun flag 0: 29944 frames in 0.62 s (playing time 0.61 s), least ring fill 8 of 768 words
-rand_1              8580  identical, NOT real time: 1 overtakes, SSI underrun flag 0: 29944 frames in 0.62 s (playing time 0.61 s), least ring fill 11 of 768 words
-rand_2              6581  identical, NOT real time: 1 overtakes, SSI underrun flag 0: 29944 frames in 0.73 s (playing time 0.61 s), least ring fill 0 of 768 words
-rand_2              8580  identical, NOT real time: 1 overtakes, SSI underrun flag 0: 29944 frames in 0.68 s (playing time 0.61 s), least ring fill 7 of 768 words
-
+music_1             6581  identical, real time: 29944 frames in 0.62 s (playing time 0.61 s), least ring fill 737 of 768 words
+music_1             8580  identical, real time: 29944 frames in 0.62 s (playing time 0.61 s), least ring fill 739 of 768 words
+music_2             6581  identical, real time: 29944 frames in 0.62 s (playing time 0.61 s), least ring fill 714 of 768 words
+music_2             8580  identical, real time: 29944 frames in 0.62 s (playing time 0.61 s), least ring fill 713 of 768 words
+tone_saw_7509       6581  identical, real time: 27948 frames in 0.57 s (playing time 0.57 s), least ring fill 761 of 768 words
+tone_saw_7509       8580  identical, real time: 27948 frames in 0.57 s (playing time 0.57 s), least ring fill 760 of 768 words
+tone_pulse_1873     6581  identical, real time: 27948 frames in 0.57 s (playing time 0.57 s), least ring fill 760 of 768 words
+tone_pulse_1873     8580  identical, real time: 27948 frames in 0.57 s (playing time 0.57 s), least ring fill 760 of 768 words
+tone_tri_17250      6581  identical, real time: 27948 frames in 0.57 s (playing time 0.57 s), least ring fill 758 of 768 words
+tone_tri_17250      8580  identical, real time: 27948 frames in 0.57 s (playing time 0.57 s), least ring fill 758 of 768 words
+noise               6581  identical, real time: 33937 frames in 0.70 s (playing time 0.69 s), least ring fill 114 of 768 words
+noise               8580  identical, real time: 33937 frames in 0.70 s (playing time 0.69 s), least ring fill 114 of 768 words
+filt_3              6581  identical, NOT real time: 4 overtakes, SSI underrun flag 0: 29944 frames in 0.81 s (playing time 0.61 s), least ring fill 2 of 768 words
+filt_3              8580  identical, NOT real time: 3 overtakes, SSI underrun flag 0: 29944 frames in 0.76 s (playing time 0.61 s), least ring fill 1 of 768 words
+sync_ring           6581  identical, NOT real time: 1 overtakes, SSI underrun flag 0: 34935 frames in 0.79 s (playing time 0.71 s), least ring fill 2 of 768 words
+sync_ring           8580  identical, NOT real time: 1 overtakes, SSI underrun flag 0: 34935 frames in 0.79 s (playing time 0.71 s), least ring fill 2 of 768 words
+rand_1              6581  identical, real time: 29944 frames in 0.63 s (playing time 0.61 s), least ring fill 29 of 768 words
+rand_1              8580  identical, NOT real time: 1 overtakes, SSI underrun flag 0: 29944 frames in 0.63 s (playing time 0.61 s), least ring fill 2 of 768 words
+rand_2              6581  identical, NOT real time: 2 overtakes, SSI underrun flag 0: 29944 frames in 0.73 s (playing time 0.61 s), least ring fill 6 of 768 words
+rand_2              8580  identical, NOT real time: 1 overtakes, SSI underrun flag 0: 29944 frames in 0.68 s (playing time 0.61 s), least ring fill 12 of 768 words
 PASS

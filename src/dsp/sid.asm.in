@@ -53,7 +53,7 @@ F_A1            equ     $04             ; TPT coefficients, Q23 words (host-deri
 F_A2            equ     $05
 F_A3            equ     $06
 F_K4            equ     $07             ; k = 1/Q divided by 4
-F_CC            equ     $08             ; high-pass cancellation (config)
+F_CC            equ     $08             ; (reserved config word; the coefficient stream passes over it)
 F_FG            equ     $09             ; filter path gain, Q22 (config)
 F_VK            equ     $0a             ; volume * mixer scale
 F_LPW           equ     $0b             ; external low-pass coefficient
@@ -90,13 +90,17 @@ G_FHEAD         equ     $4c             ; write queue: next entry out
 G_FTAIL         equ     $4d             ; write queue: next entry in
 ; stream status, DSP_CMD_STREAM_READ index 0..6 (keep the order)
 G_STAT          equ     $50
-G_FRAMES        equ     $50             ; (unused)
+G_STARTED       equ     $50             ; the first frame has been released: the ring is in use
 G_SUM           equ     $51             ; checksum of the rendered frames: sum = 3*sum + chip + v1 + v2 + v3
 G_MINFILL       equ     $52             ; least ring fill seen once primed, in words
 G_FCNT          equ     $53             ; write queue entries
 G_CYC           equ     $54             ; render clock, SID cycles mod 2^24
 G_UNDER         equ     $55             ; times the transmitter overtook the renderer
 G_TUE           equ     $56             ; bit 0: the SSI reported a transmit underrun
+F_WL            equ     $58             ; the filter outputs' gains / 2 (Q23, host-derived with the coefficients):
+F_WB            equ     $59             ; low-pass, band-pass, high-pass,
+F_WH            equ     $5a
+F_WLEAK         equ     $5b             ; and the low-pass share in the high-pass output
 
 ; The stream's memory (external X, above the tables)
 FIFO_BASE       equ     $3400           ; write queue: 256 entries of cycle, register, value
@@ -245,12 +249,12 @@ mix_frame:
         move    l:(r5),x
         sub     x,a
         move    a,l:(r5)                        ; s1 = 2*v1 - s1
-        move    x:(r7)+,x0                      ; hp = x - 4*k4*v1h - cc*v2h
+        move    x:(r7)+,x0                      ; hp = x - 4*k4*v1h - v2h
         mpy     x0,y0,a         y:<T_X,b
         asl     a
         asl     a
         sub     a,b             x:(r7)+,x0
-        mac     -x0,y1,b        y:<6,x1         ; mlp
+        sub     y1,b            y:<6,x1         ; (the word read above is reserved); mlp
         mpy     x1,y1,a         y:<7,x1         ; v2h * mlp; mbp
         mac     x1,y0,a         y:<8,x1         ; + v1h * mbp; mhp
         move    b1,y0
@@ -559,7 +563,23 @@ wq_ret: move    l:<G_N,y
 ; One step of the stream: render frames into the ring while there is room,
 ; the host's horizon allows and the host is silent.
 stream_step:
-        move    r3,x0                   ; the transmitter's position
+        move    x:G_STARTED,a
+        tst     a
+        jne     ss_run
+        move    x:<G_HREM,a             ; nothing released yet: the transmitter plays the empty ring
+        tst     a
+        jle     main_loop
+        move    r3,a                    ; the first frame goes just ahead of the transmitter
+        move    #>RING_BASE-2,x0
+        sub     x0,a
+        move    #>RING_WORDS-2,x0
+        and     x0,a
+        move    #>RING_BASE,x0
+        add     x0,a
+        move    a1,x:G_WP
+        move    #>1,x0
+        move    x0,x:G_STARTED
+ss_run: move    r3,x0                   ; the transmitter's position
         move    x:G_WP,a
         sub     x0,a
         move    #>RING_WORDS-1,x0
@@ -1113,7 +1133,7 @@ cmd_config:                             ; wave zero, floating TTL, model, shift 
         jsr     env_refresh_2
         jmp     reply_ok
 
-cmd_filter:                             ; a1, a2, a3, k4 (Q23 words, derived by the host)
+cmd_filter:                             ; a1, a2, a3, k4, wl, wb, wh, wleak (Q23 words, derived by the host)
         jclr    #0,x:m_hsr,*
         movep   x:m_hrx,x0
         move    x0,x:<F_A1
@@ -1126,6 +1146,12 @@ cmd_filter:                             ; a1, a2, a3, k4 (Q23 words, derived by 
         jclr    #0,x:m_hsr,*
         movep   x:m_hrx,x0
         move    x0,x:<F_K4
+        move    #>F_WL,r0
+        do      #4,cf_w
+        jclr    #0,x:m_hsr,*
+        movep   x:m_hrx,x:(r0)+
+cf_w:
+        jsr     update_masks
         jmp     reply_ok
 
 cmd_read:                               ; reg -> shadow value
@@ -1150,8 +1176,8 @@ cmd_write:                              ; reg, value
         move    x0,x:G_WRET
 
 ; One register write: x1 = register, y1 = value; ends at wr_done, which
-; returns through G_WRET. Registers 32-35 are not the SID's: they carry the
-; filter coefficient words a1, a2, a3, k4 in the write queue.
+; returns through G_WRET. Registers 32-39 are not the SID's: they carry the
+; filter coefficient words in the write queue.
 write_dispatch:
         move    x1,a
         move    #>31,x0
@@ -1178,14 +1204,23 @@ cw_not2:
         sub     x0,a
         move    a1,x1
         jmp     write_reg_1
-wd_coef:
-        move    #>35,x0
+wd_coef:                                ; 32-35: a1 a2 a3 k4; 36-39: wl wb wh wleak (the last one sets the weights)
+        move    #>39,x0
         cmp     x0,a
         jgt     wr_done
         move    x1,n1
         move    #>F_A1-32,r1
+        move    #>36,x0
+        cmp     x0,a
+        jlt     wd_store
+        move    #>F_WL-36,r1
+wd_store:
         nop
         move    y1,x:(r1+n1)
+        move    #>39,x0
+        cmp     x0,a
+        jne     wr_done
+        jsr     update_masks
 wr_done:
         move    x:G_WRET,r1
         nop
@@ -1252,19 +1287,23 @@ um_d2off:
         jmp     um_mode
 um_r2:  move    x0,y:(r0)+
         move    a1,y:(r0)+
-um_mode:
-        jset    #0,y1,um_lp
-        move    a1,y:(r0)+
-        jmp     um_bp
-um_lp:  move    y0,y:(r0)+
-um_bp:  jset    #1,y1,um_bpon
-        move    a1,y:(r0)+
-        jmp     um_hp
-um_bpon: move   y0,y:(r0)+
-um_hp:  jset    #2,y1,um_hpon
-        move    a1,y:(r0)+
-        jmp     um_rt
-um_hpon: move   y0,y:(r0)+
+um_mode:                                ; the mode weights: each selected output's gain (gain / 2 words, from
+        clr     a                       ; the host with the coefficients); the high-pass brings a share of the
+        jclr    #0,y1,um_nlp            ; low-pass
+        move    x:F_WL,a
+um_nlp: jclr    #2,y1,um_nlk
+        move    x:F_WLEAK,x0
+        add     x0,a
+um_nlk: move    a1,y:(r0)+              ; mlp
+        clr     a
+        jclr    #1,y1,um_nbp
+        move    x:F_WB,a
+um_nbp: move    a1,y:(r0)+              ; mbp
+        clr     a
+        jclr    #2,y1,um_nhp
+        move    x:F_WH,a
+um_nhp: move    a1,y:(r0)+              ; mhp
+        clr     a
 um_rt:  move    x1,a
         tst     a
         jne     um_routed

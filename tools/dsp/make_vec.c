@@ -46,6 +46,18 @@ static int read_trace(const char *path, write_t **out, size_t *count, long long 
     return *end > 0 ? 0 : -1;
 }
 
+/* The coefficient words as DSP_CMD_FILTER takes them (24-bit two's complement). */
+static void coef_words(FILE *f, const sid_filter_coeffs_t *c)
+{
+    const int32_t *w = &c->a1;
+    int j;
+
+    fprintf(f, "        dc.l    ");
+    for (j = 0; j < SID_FILTER_COEFF_WORDS; j++)
+        fprintf(f, "%s%u", j ? "," : "", (unsigned)w[j] & 0xffffff);
+    fputc('\n', f);
+}
+
 static void table(FILE *f, const char *label, const unsigned *v, int n)
 {
     int i;
@@ -134,7 +146,8 @@ int main(int argc, char **argv)
 
     /* Run the reference to find the frame each write lands in and the output. */
     sid_ref_reset(&s, model);
-    fprintf(vec, "vec_coef0:\n        dc.l    %d,%d,%d,%d\n", (int)s.flt.c.a1, (int)s.flt.c.a2, (int)s.flt.c.a3, (int)s.flt.c.k4);
+    fprintf(vec, "vec_coef0:\n");
+    coef_words(vec, &s.flt.c);
     {
         size_t cap = nw + 1;
         long *ef = malloc(cap * sizeof *ef);
@@ -162,10 +175,12 @@ int main(int argc, char **argv)
         fprintf(vec, "vec_end equ %lld\nvec_stream:\n", end);
         for (k = 0; k < nw; k++) {
             fprintf(vec, "        dc.l    %lld,%u,%u\n", w[k].cycle, w[k].reg, w[k].value & 0xff);
-            if (w[k].reg >= 21 && w[k].reg <= 23)
-                fprintf(vec, "        dc.l    %lld,32,%u,%lld,33,%u,%lld,34,%u,%lld,35,%u\n",
-                        w[k].cycle, (unsigned)ec[k].a1 & 0xffffff, w[k].cycle, (unsigned)ec[k].a2 & 0xffffff,
-                        w[k].cycle, (unsigned)ec[k].a3 & 0xffffff, w[k].cycle, (unsigned)ec[k].k4 & 0xffffff);
+            if (w[k].reg >= 21 && w[k].reg <= 23) {
+                const int32_t *cw = &ec[k].a1;
+                int j;
+                for (j = 0; j < SID_FILTER_COEFF_WORDS; j++)
+                    fprintf(vec, "        dc.l    %lld,%d,%u\n", w[k].cycle, 32 + j, (unsigned)cw[j] & 0xffffff);
+            }
         }
         fprintf(vec, "        dc.l    $7fffffff,0,0\n");
         if (argc > 6) {
@@ -176,10 +191,11 @@ int main(int argc, char **argv)
         }
         fprintf(vec, "vec_frames equ %ld\n", nframes);
         fprintf(vec, "vec_events:\n");
-        for (k = 0; k < nw; k++)
-            fprintf(vec, "        dc.l    %ld,%u,%u,%d,%d,%d,%d\n", ef[k], w[k].reg, w[k].value,
-                    (int)ec[k].a1, (int)ec[k].a2, (int)ec[k].a3, (int)ec[k].k4);
-        fprintf(vec, "        dc.l    -1,0,0,0,0,0,0\n");
+        for (k = 0; k < nw; k++) {                       /* frame, register, value, then the coefficient words */
+            fprintf(vec, "        dc.l    %ld,%u,%u\n", ef[k], w[k].reg, w[k].value);
+            coef_words(vec, &ec[k]);
+        }
+        fprintf(vec, "        dc.l    -1,0,0\n");
         free(ef);
         free(ec);
     }

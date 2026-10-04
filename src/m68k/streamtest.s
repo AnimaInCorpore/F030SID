@@ -279,11 +279,11 @@ stream_read:
         bsr     dsp_put
         bra     dsp_get
 
-; a2 -> four longs (a1, a2, a3, k4): DSP_CMD_FILTER
+; a2 -> the coefficient words: DSP_CMD_FILTER
 send_coef:
         move.l  #DSP_CMD_FILTER,d0
         bsr     dsp_put
-        moveq   #3,d3
+        moveq   #DSP_FILTER_WORDS-1,d3
 sc_loop:
         move.l  (a2)+,d0
         and.l   #$ffffff,d0

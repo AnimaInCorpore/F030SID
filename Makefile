@@ -68,7 +68,11 @@ endef
 
 HOST_CC ?= gcc
 HOST_CXX ?= g++
-HOST_STATIC ?= -static   # macOS has no static libc: make HOST_STATIC=
+ifeq ($(HOST_UNAME),Darwin)
+HOST_STATIC ?=           # macOS has no static libc
+else
+HOST_STATIC ?= -static
+endif
 PERL ?= perl
 PYTHON ?= python3
 REF_BUILD := build/ref
@@ -81,7 +85,7 @@ RESID_TABLES := wave6581_PST wave6581_PS_ wave6581_P_T wave6581__ST \
 REF_EXE := $(if $(filter MINGW% MSYS% CYGWIN%,$(HOST_UNAME)),.exe,)
 
 .PHONY: all help host dsp check run clean tools ratetest-hatari dspprobe-hatari smoke profile-sid \
-	ref ref-gate filter-gate dsp-gate stream-gate
+	ref ref-gate filter-gate dsp-gate stream-gate cpu-gate cpu-ref-check coef-gate play-gate
 
 ref: $(REF_BUILD)/ref_run$(REF_EXE) $(REF_BUILD)/oracle_resid$(REF_EXE)
 
@@ -295,8 +299,70 @@ $(RELEASE_DIR)/f030sid.tos: $(M68K_OBJECTS) $(VLINK)
 	@mkdir -p $(RELEASE_DIR)
 	$(VLINK) $(M68K_OBJECTS) -b ataritos -s -e start -o $@
 
-$(RELEASE_DIR)/f030sid.ttp: $(RELEASE_DIR)/f030sid.tos
-	cp $< $@
+# --- the player (docs/player.md) --------------------------------------------
+# One opcode table for the C reference core and the 68030 core; the DSP and
+# filter tables per chip model as binaries the player carries.
+PLAYER_OPS := $(GENERATED_BUILD)/cpu6502_ops.i
+PLAYER_TABLES := $(GENERATED_BUILD)/sidtab.i
+
+$(PLAYER_OPS): tools/player/gen_6502.py
+	@mkdir -p $(GENERATED_BUILD)
+	python3 tools/player/gen_6502.py $(GENERATED_BUILD)/cpu6502_tab.h $@
+
+$(REF_BUILD)/psidref$(REF_EXE): tools/player/psidref.c $(PLAYER_OPS)
+	@mkdir -p $(REF_BUILD)
+	$(HOST_CC) -O2 $(HOST_STATIC) -std=c99 -Wall -Wextra -I$(GENERATED_BUILD) $< -o $@
+
+$(REF_BUILD)/gen_player_tables$(REF_EXE): tools/player/gen_player_tables.c src/ref/sid_ref.c src/ref/sid_ref.h src/ref/filter_tables.h
+	@mkdir -p $(REF_BUILD)
+	$(HOST_CC) -O2 $(HOST_STATIC) -std=c99 -Wall -Wextra -Isrc/ref src/ref/sid_ref.c $< -o $@ -lm
+
+$(REF_BUILD)/coefref$(REF_EXE): tools/player/coefref.c src/ref/sid_ref.c src/ref/sid_ref.h src/ref/filter_tables.h
+	@mkdir -p $(REF_BUILD)
+	$(HOST_CC) -O2 $(HOST_STATIC) -std=c99 -Wall -Wextra -Isrc/ref src/ref/sid_ref.c $< -o $@ -lm
+
+$(PLAYER_TABLES): $(REF_BUILD)/gen_player_tables$(REF_EXE)
+	@mkdir -p $(GENERATED_BUILD)
+	$(REF_BUILD)/gen_player_tables$(REF_EXE) $(RESID_DIR) $(GENERATED_BUILD)
+
+$(M68K_BUILD)/player.o: src/m68k/player.s src/m68k/cpu6502.s src/m68k/psid.s src/m68k/filtcoef.s \
+		src/m68k/xbios.i src/m68k/protocol.i $(PLAYER_OPS) $(PLAYER_TABLES) $(DSP_STAGE2_IMAGE) $(VASM)
+	@mkdir -p $(M68K_BUILD)
+	$(VASM) $< -quiet -Felf -m68030 -Isrc/m68k -I$(GENERATED_BUILD) \
+		-o $@ -L $(M68K_BUILD)/player.lst
+
+$(RELEASE_DIR)/f030sid.ttp: $(M68K_BUILD)/player.o $(VLINK)
+	@mkdir -p $(RELEASE_DIR)
+	$(VLINK) $< -b ataritos -s -e start -o $@
+
+GATE_TOOLS = --vasm $(VASM)$(REF_EXE) --vlink $(VLINK)$(REF_EXE) --hatari $(HATARI) \
+	--tos third_party/f030dsp3d/tools/tos402.rom
+
+# The 68030 6510 core against the C reference: the test tunes and the opcode exercisers.
+cpu-gate: $(REF_BUILD)/psidref$(REF_EXE) $(PLAYER_OPS) $(VASM) $(VLINK)
+	$(call require_hatari,cpu-gate)
+	$(PYTHON) tools/player/make_exerciser.py build/cpu 6
+	$(PYTHON) tools/player/cpu_gate.py --build build --psidref $(REF_BUILD)/psidref$(REF_EXE) $(GATE_TOOLS) $(CPU_GATE_ARGS)
+
+# The C reference core against libsidplayfp's 6510 (needs `make trace`).
+cpu-ref-check: $(REF_BUILD)/psidref$(REF_EXE) trace
+	$(PYTHON) tools/player/make_exerciser.py build/cpu 6
+	$(PYTHON) tools/player/check_portable.py $(REF_BUILD)/psidref$(REF_EXE) $(LSFP_BUILD)/sidtrace$(REF_EXE) build/cpu/portable_*.sid
+
+# The 68030 filter coefficient routine against the C one.
+coef-gate: $(REF_BUILD)/coefref$(REF_EXE) $(PLAYER_TABLES) $(VASM) $(VLINK)
+	$(call require_hatari,coef-gate)
+	$(PYTHON) tools/player/coef_gate.py --build build --coefref $(REF_BUILD)/coefref$(REF_EXE) $(GATE_TOOLS)
+
+# The player end to end: PSID in, the DSP's frames bit-identical to the references, in real time.
+play-gate: all $(REF_BUILD)/psidref$(REF_EXE) $(REF_BUILD)/make_vec$(REF_EXE)
+	$(call require_hatari,play-gate)
+	@mkdir -p build/play
+	$(PYTHON) tools/player/make_trace_sid.py tests/traces/voice_music_1.trace build/play/music_1.sid "F030SID music 1"
+	$(PYTHON) tools/player/make_trace_sid.py tests/traces/voice_music_2.trace build/play/music_2.sid "F030SID music 2"
+	$(PYTHON) tools/player/play_gate.py --build build --psidref $(REF_BUILD)/psidref$(REF_EXE) \
+		--make-vec $(REF_BUILD)/make_vec$(REF_EXE) --player $(RELEASE_DIR)/f030sid.ttp \
+		--hatari $(HATARI) --tos third_party/f030dsp3d/tools/tos402.rom $(PLAY_GATE_ARGS) | tee build/play-gate-results.txt
 
 $(RELEASE_DIR)/ratetest.tos: $(M68K_BUILD)/ratetest.o $(VLINK)
 	@mkdir -p $(RELEASE_DIR)
