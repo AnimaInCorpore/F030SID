@@ -12,7 +12,42 @@ emulate is in `tools/player/README.md` (no ROMs, CIA, VIC or interrupts: PSID
 tunes with a play routine at a fixed rate; no RSID, no interrupt-driven digis,
 PAL only, one SID). Not yet there: fade-out and song lengths, a display beyond
 title and author, tune selection while playing. Nothing has run on a real
-Falcon. The rest of this document is the original plan.
+Falcon. On an error the player now waits for a key, so the message can be read
+when it was started from the desktop.
+
+**Real tunes** (twelve from HVSC in `music/`, 2026-10-04, calibrated Hatari; `make
+tune-check`, `make tune-gate`). `tune-check`: on all ten PSID tunes the reference
+core's register writes equal libsidplayfp's over 55 s (17,000 to 112,000 writes
+each; the elapsed cycles differ by less than a frame); the two RSID tunes (Great
+Giana Sisters, Tetris: samples from interrupts) differ within the first writes, as
+expected. Player gate, 30 s each with the tune's model: the DSP's checksum equals
+the reference's on every PSID tune, but real time is held by three only.
+
+| tune | model | 30 s of tune take | overtakes | least ring fill |
+| --- | --- | ---: | ---: | ---: |
+| Ocean Loader 2 | 6581 | 30.02 s | 0 | 667 |
+| Last Ninja 2 | 6581 | 30.09 s | 0 | 411 |
+| Cybernoid II | 6581 | 30.09 s | 0 | 8 |
+| Turrican | 6581 | 30.30 s | 10 | 0 |
+| Commando | 6581 | 31.49 s | 25 | 0 |
+| Monty on the Run | 6581 | 34.19 s | 88 | 0 |
+| Edge of Disgrace | 8580 | 36.49 s | 170 | 0 |
+| Wizball | 6581 | 37.42 s | 287 | 0 |
+| Ghouls 'n Ghosts | 6581 | 43.38 s | 246 | 0 |
+| RoboCop 3 | 8580 | 49.06 s | 260 | 0 |
+
+So the kernel's mean cost on real music is 100-165% of the frame, not the 85% of
+the synthetic `music_*` traces. The overtake counter undercounts (a lap during a
+run that ends through `ss_break` is lost when `G_LAST` is rewritten), the elapsed
+time is the reliable figure. Where the time could come from: see "After the
+kernel existed" in `scummvm-opl-hints.md`.
+
+These runs also found a rounding difference: the DSP's `rnd` on the output word
+rounds an exact tie to even, the reference rounded it up. It showed after 7.6 s of
+the package's demo tune on the 8580 and 13 s into Cybernoid II; the reference now
+rounds as the DSP does (`mix_output`).
+
+The rest of this document is the original plan.
 
 Two TOS programs are needed. `voicetest.tos` (done) is the test harness: it
 feeds trace vectors to the DSP kernel and dumps the output so the gate can

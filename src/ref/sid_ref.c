@@ -850,7 +850,11 @@ static int32_t mix_output(const sid_ref_t *s, sid_filter_state_t *st, const int3
     /* external filter: vo = lp(16 kHz)(mixed) - lp(16 Hz)(lp(16 kHz)(mixed)) */
     y = onepole(&st->xl, acc, EXT_LP_W);
     y2 = onepole(&st->xh, y, EXT_HP_W);
-    return (int32_t)((y - y2 + (1 << 23)) >> 24);
+    /* the DSP's RND: to nearest, and an exact tie to even (convergent rounding) */
+    acc = y - y2;
+    t = (int32_t)((acc + (1 << 23)) >> 24);
+    if ((acc & 0xffffff) == 0x800000) t &= ~1;
+    return t;
 }
 
 void sid_ref_frame(sid_ref_t *s, sid_frame_t *f)

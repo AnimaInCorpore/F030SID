@@ -173,6 +173,56 @@ exact, even if the waveform DAC and filter are approximations.
    (`dsp/oplrt.asm` near the labels at `p:$2000` and the `m_crb`/`m_cra`
    writes around lines 1803-1837).
 
+## After the kernel existed (2026-10-04)
+
+A second reading of `oplrt.asm` against `src/dsp/sid.asm.in`, prompted by real
+tunes costing 100-165% of the frame (docs/player.md). Read from the code and the
+result files; the gains are estimates, nothing below has been built.
+
+From the OPL kernel to the SID kernel, all exact:
+
+1. **The stream loop.** oplrt emits in a tight `do` with pointers and checksum
+   in registers and polls the host once per block: 7.3-7.8 cycles per frame
+   ("Emit, clear, events" in its README). `stream_step` pays about 50: an HSR
+   test, a horizon test, a nine-instruction checksum over four words, `G_WP` and
+   `G_SUM` through long addresses and the `G_HREM` update, per frame, from
+   external P. Bounding the run once by `min(room, horizon / 21)`, polling HSR
+   every few frames and summing the chip word only should return 20-30 cycles.
+2. **Noise.** oplrt advances a silent noise register lazily (`catch_up_noise`)
+   and steps it several clocks at once through byte tables (`noise_jump`). The
+   SID kernel shifts every voice's register at every bit-19 edge, noise selected
+   or not, and gathers the eight output bits with `jclr` chains: about 88 cycles
+   a step, half of it the gather. Count the pending steps of a voice without
+   noise and catch up on the control write; gather with three 256-entry tables.
+3. **Silent voices.** oplrt skips a silent channel and keeps its phase running.
+   A SID voice released to envelope 0 still runs its waveform handler and every
+   polyBLEP edge; a null handler from `es_zero` would save 15-25 cycles and the
+   edges (check that the envelope DAC word at 0 is exactly 0).
+4. **Envelope hold.** `eh_hold` is visited every rate period, every frame at
+   rate 0. Advance `S_REM` by a multiple of the period and reduce it on the next
+   write instead.
+5. **Transport.** oplrt's events are two words; a SID write is three, and a
+   cutoff write becomes nine queue entries. One multi-word coefficient entry.
+6. **A practical tier, gated as oplrt's is.** Block-rate envelopes do not carry
+   over (the countdown envelope is already cheap when idle); the candidates are
+   the polyBLEP correction (a reciprocal multiply for its `DIV`, or two points
+   instead of four), with the reference changed to match so the gates stay exact.
+7. **32.78 kHz** as a fallback build: 489 cycles per frame; the aliasing of the
+   paths that are not band-limited is unmeasured.
+
+Overload: neither kernel sheds load. oplrt replays the stale half and counts
+every one from every wait (`track_halves`); the SID stream replays about a ring
+and its count is low (see docs/player.md). A doubled frame (n = 40/41, written
+twice) when the fill is low would be the SID's equivalent of extension periods.
+
+From the SID kernel to the OPL kernel: `op_boundary` recomputes the gains of
+every keyed operator on every block and split; a per-operator "unchanged"
+countdown, as the SID frame uses, would cut its 23-26 cycles per frame. oplrt's
+checksum is an order-insensitive sum; `3 * sum + word` is stronger. Its status
+word wraps the late count at 4096. Its README still describes block-boundary
+writes and noise "stepped twice a frame" where the code is sample-timed; section
+3 above inherited the first.
+
 ## Where to look in the ScummVM tree
 
 | Topic | Path (under `C:\Arbeit\scummvm`) |

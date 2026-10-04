@@ -184,7 +184,9 @@ notpsid:
         bra.s   wait_exit
 nodsp:  Cconws  txt_nodsp
         Dsp_Unlock
-wait_exit:
+wait_exit:                              ; from the desktop the screen is gone at once: wait for a key
+        Cconws  txt_key
+        Cconin
         Pterm0
 
 ; ------------------------------------------------------------ command line
@@ -612,6 +614,7 @@ txt_nofile:     dc.b    'cannot open the tune',13,10,0
 txt_notpsid:    dc.b    'not a PSID file',13,10,0
 txt_nodsp:      dc.b    'the DSP did not start',13,10,0
 txt_done:       dc.b    'done',13,10,0
+txt_key:        dc.b    'press a key',13,10,0
 inf_name:       dc.b    'AUTOPLAY.INF',0
 out_name:       dc.b    'PLAYOUT.BIN',0
         even

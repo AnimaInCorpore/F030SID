@@ -15,7 +15,7 @@ trace. The run passes when
     the run took the tune's playing time (real time, under the DSP-calibrated
     Hatari).
 
-  play_gate.py --vasm V --vlink L --hatari H --tos ROM [--seconds S] [--jobs N] [tunes.sid ...]
+  play_gate.py --hatari H --tos ROM [--seconds S] [--models 6581,8580|tune] [--jobs N] [tunes.sid ...]
 """
 import argparse
 import glob
@@ -58,7 +58,7 @@ def one(args, tune, model):
         subprocess.run(
             [args.hatari, "--machine", "falcon", "--dsp", "emu", "--memsize", "14", "--tos", args.tos,
              "--patch-tos", "true", "--fast-boot", "true", "--fast-forward", "true", "--sound", "off",
-             "--confirm-quit", "false", "--run-vbls", str(int(args.seconds * 60 + 900)), "--conout", "2",
+             "--confirm-quit", "false", "--run-vbls", str(int(args.seconds * args.vbls_per_second + 900)), "--conout", "2",
              "F030SID.TOS"],
             cwd=gate, env=env, stdout=f, stderr=subprocess.STDOUT, timeout=args.timeout)
     label = f"{name:<20}{model:>6}"
@@ -78,6 +78,13 @@ def one(args, tune, model):
     return label, f"identical, real time: {info}"
 
 
+def tune_model(tune):
+    """The chip model a PSID v2+ header asks for; the 6581 otherwise (as the player decides)."""
+    head = open(tune, "rb").read(0x78)
+    version, flags = struct.unpack(">H", head[4:6])[0], struct.unpack(">H", head[0x76:0x78])[0]
+    return "8580" if version >= 2 and (flags >> 4) & 3 == 2 else "6581"
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--build", default=os.path.join(ROOT, "build"))
@@ -88,7 +95,9 @@ def main():
     ap.add_argument("--tos", required=True)
     ap.add_argument("--seconds", type=int, default=5)
     ap.add_argument("--timeout", type=int, default=900)
-    ap.add_argument("--models", default="6581,8580")
+    ap.add_argument("--models", default="6581,8580", help='chip models, or "tune": the one each tune asks for')
+    ap.add_argument("--vbls-per-second", type=int, default=60,
+                    help="emulated VBLs allowed per second of tune (more lets a tune that is slower than real time finish)")
     ap.add_argument("--jobs", type=int, default=1)
     ap.add_argument("tunes", nargs="*")
     args = ap.parse_args()
@@ -97,7 +106,10 @@ def main():
     tunes = [os.path.abspath(t) for t in args.tunes] or (
         sorted(glob.glob(os.path.join(ROOT, "tests", "psid", "*.sid")))
         + sorted(glob.glob(os.path.join(args.build, "play", "*.sid"))))
-    runs = [(t, m) for t in tunes for m in args.models.split(",")]
+    if args.models == "tune":
+        runs = [(t, tune_model(t)) for t in tunes]
+    else:
+        runs = [(t, m) for t in tunes for m in args.models.split(",")]
     ok = True
     print(f"{'tune':<20}{'model':>6}  result")
     with ThreadPoolExecutor(max_workers=args.jobs) as pool:

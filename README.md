@@ -12,9 +12,15 @@ verification idea. See [`docs/architecture.md`](docs/architecture.md).
 ## Project status
 
 `release/f030sid.ttp` plays PSID files: `F030SID.TTP tune.sid [song] [-m 6581|8580]
-[-t seconds]`. Everything has been built and tested under the DSP-calibrated
-Hatari only; nothing has run on a physical Falcon, and no real tune has been
-played yet, only synthetic test tunes.
+[-t seconds]`; `make package` wraps it into `release/F030SID.ZIP` (the player, a
+demo tune and a 40-column `README.TXT`). Everything has been built and tested
+under the DSP-calibrated Hatari only; nothing has run on a physical Falcon.
+
+Real tunes (twelve from HVSC, see [`docs/player.md`](docs/player.md)): on the ten
+PSID tunes the 6510 side writes what libsidplayfp writes and the DSP's samples
+equal the reference model's, but only three of them hold real time. The others
+need more than the DSP's 326 cycles per frame, by 1% to 64%; the two RSID tunes
+do not play. The kernel's cost is the open problem, not its correctness.
 
 What exists:
 
@@ -83,6 +89,10 @@ with `/ucrt64/bin` on `PATH`; from a plain Git-bash some tools fail.
 | `make coef-gate` | the 68030 filter coefficient routine against the C one | Hatari |
 | `make play-gate` | the player end to end: PSID in, the DSP's frames out | Hatari |
 | `make trace`, `make trace-test` | `sidtrace` (PSID to register trace via libsidplayfp) | network, host C++ |
+| `make package` | `release/F030SID.ZIP`: `F030SID.TTP`, `DEMO.SID`, `README.TXT` (`package/README.TXT`, sent with CRLF) | `zip` |
+| `make package-gate` | the packaged player on the packaged demo tune, through the player gate | Hatari |
+| `make tune-check` | real tunes in `music/*.sid` (git-ignored; `TUNES=...`): the reference 6510 core against libsidplayfp | `make trace` |
+| `make tune-gate` | the same tunes through the player, 30 s each with the tune's chip model | Hatari |
 
 The gate scripts take `--jobs N` (through `DSP_GATE_ARGS`, `STREAM_GATE_ARGS`,
 `CPU_GATE_ARGS`, `PLAY_GATE_ARGS`) to run several Hatari instances at once.

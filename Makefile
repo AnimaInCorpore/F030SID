@@ -85,7 +85,8 @@ RESID_TABLES := wave6581_PST wave6581_PS_ wave6581_P_T wave6581__ST \
 REF_EXE := $(if $(filter MINGW% MSYS% CYGWIN%,$(HOST_UNAME)),.exe,)
 
 .PHONY: all help host dsp check run clean tools ratetest-hatari dspprobe-hatari smoke profile-sid \
-	ref ref-gate filter-gate dsp-gate stream-gate cpu-gate cpu-ref-check coef-gate play-gate
+	ref ref-gate filter-gate dsp-gate stream-gate cpu-gate cpu-ref-check coef-gate play-gate \
+	package package-gate tune-check tune-gate
 
 ref: $(REF_BUILD)/ref_run$(REF_EXE) $(REF_BUILD)/oracle_resid$(REF_EXE)
 
@@ -196,6 +197,7 @@ help:
 	@echo "Build targets:"
 	@echo "  all              build the Falcon executables and DSP image"
 	@echo "  check            build everything and validate the assembler listings"
+	@echo "  package          build release/F030SID.ZIP (player, demo tune, README.TXT)"
 	@echo "  run              launch f030sid.tos in Hatari"
 	@echo "  ratetest-hatari  run the physical-Falcon SSI rate test under Hatari"
 	@echo "  dspprobe-hatari  run the physical-Falcon DSP bus probe under Hatari"
@@ -364,6 +366,52 @@ play-gate: all $(REF_BUILD)/psidref$(REF_EXE) $(REF_BUILD)/make_vec$(REF_EXE)
 		--make-vec $(REF_BUILD)/make_vec$(REF_EXE) --player $(RELEASE_DIR)/f030sid.ttp \
 		--hatari $(HATARI) --tos third_party/f030dsp3d/tools/tos402.rom $(PLAY_GATE_ARGS) | tee build/play-gate-results.txt
 
+# --- the release package ----------------------------------------------------
+# F030SID.ZIP: the player, a demo tune and the 40-column release note, in one
+# folder (the DSP image is inside the TTP). The note goes out with CRLF line
+# ends; the demo is an original trace replayed by make_trace_sid.py's routine.
+PACKAGE_BUILD := build/package
+PACKAGE_DIR := $(PACKAGE_BUILD)/F030SID
+PACKAGE_ZIP := $(RELEASE_DIR)/F030SID.ZIP
+
+$(PACKAGE_BUILD)/demo.sid: tools/player/make_demo_trace.py tools/player/make_trace_sid.py
+	@mkdir -p $(PACKAGE_BUILD)
+	$(PYTHON) tools/player/make_demo_trace.py $(PACKAGE_BUILD)/demo.trace
+	$(PYTHON) tools/player/make_trace_sid.py $(PACKAGE_BUILD)/demo.trace $@ "F030SID demo"
+
+package: $(PACKAGE_ZIP)
+
+$(PACKAGE_ZIP): $(RELEASE_DIR)/f030sid.ttp $(PACKAGE_BUILD)/demo.sid package/README.TXT
+	@awk 'length($$0) > 40 { printf "error: package/README.TXT line %d is wider than 40 columns\n", NR; bad = 1 } \
+		END { exit bad }' package/README.TXT >&2
+	@rm -rf $(PACKAGE_DIR) $@ && mkdir -p $(PACKAGE_DIR)
+	cp $(RELEASE_DIR)/f030sid.ttp $(PACKAGE_DIR)/F030SID.TTP
+	cp $(PACKAGE_BUILD)/demo.sid $(PACKAGE_DIR)/DEMO.SID
+	awk '{ printf "%s\r\n", $$0 }' package/README.TXT > $(PACKAGE_DIR)/README.TXT
+	cd $(PACKAGE_BUILD) && zip -q -X -r $(CURDIR)/$@ F030SID
+	@unzip -l $@
+
+# The packaged player on the packaged demo tune, through the player gate.
+package-gate: $(PACKAGE_ZIP) $(REF_BUILD)/psidref$(REF_EXE) $(REF_BUILD)/make_vec$(REF_EXE)
+	$(call require_hatari,package-gate)
+	$(PYTHON) tools/player/play_gate.py --build build --psidref $(REF_BUILD)/psidref$(REF_EXE) \
+		--make-vec $(REF_BUILD)/make_vec$(REF_EXE) --player $(PACKAGE_DIR)/F030SID.TTP \
+		--hatari $(HATARI) --tos third_party/f030dsp3d/tools/tos402.rom --seconds 32 --jobs 2 \
+		$(PACKAGE_DIR)/DEMO.SID
+
+# Real tunes (music/*.sid, not in the repository): the reference 6510 core
+# against libsidplayfp, then the player end to end on the same tunes.
+TUNES ?= $(wildcard music/*.sid)
+tune-check: $(REF_BUILD)/psidref$(REF_EXE) trace
+	$(PYTHON) tools/player/tune_check.py $(REF_BUILD)/psidref$(REF_EXE) $(LSFP_BUILD)/sidtrace$(REF_EXE) $(TUNES)
+
+tune-gate: all $(REF_BUILD)/psidref$(REF_EXE) $(REF_BUILD)/make_vec$(REF_EXE)
+	$(call require_hatari,tune-gate)
+	$(PYTHON) tools/player/play_gate.py --build build --psidref $(REF_BUILD)/psidref$(REF_EXE) \
+		--make-vec $(REF_BUILD)/make_vec$(REF_EXE) --player $(RELEASE_DIR)/f030sid.ttp \
+		--hatari $(HATARI) --tos third_party/f030dsp3d/tools/tos402.rom --seconds 30 --models tune --vbls-per-second 130 \
+		$(PLAY_GATE_ARGS) $(TUNES)
+
 $(RELEASE_DIR)/ratetest.tos: $(M68K_BUILD)/ratetest.o $(VLINK)
 	@mkdir -p $(RELEASE_DIR)
 	$(VLINK) $< -b ataritos -s -e start -o $@
@@ -462,5 +510,5 @@ clean:
 	rm -rf build
 	rm -f $(RELEASE_DIR)/f030sid.tos $(RELEASE_DIR)/f030sid.ttp \
 		$(RELEASE_DIR)/ratetest.tos $(RELEASE_DIR)/dspprobe.tos \
-		$(RELEASE_DIR)/sid.lod
+		$(RELEASE_DIR)/sid.lod $(RELEASE_DIR)/F030SID.ZIP
 	@rmdir $(RELEASE_DIR) 2>/dev/null || true
