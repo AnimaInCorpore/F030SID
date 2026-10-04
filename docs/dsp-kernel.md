@@ -85,7 +85,7 @@ so the skip is exact). Measured with `profile_dsp.py` on one call in the first
 frame of the gate vector, so it is a sample, not a worst case.
 
 Not yet on the DSP:
-band-limiting (polyBLEP and the sample-instant phase), the SSI stream.
+band-limiting (polyBLEP and the sample-instant phase).
 
 ### Source layout
 
@@ -168,7 +168,41 @@ register cleared (zero wait states on external memory).
 External P aliases external Y (docs/dsp56001-notes.md): the kernel stays below
 P:$1400 and the Y tables sit above it. The Hatari gate exercises this aliasing.
 
-## Protocol (v6)
+## The SSI stream (protocol v7)
+
+`DSP_CMD_STREAM_START` turns the transmitter on. Its interrupt (a two-word fast
+interrupt at P:$0010, `r3/m3`) plays a ring of 512 stereo frames in external X;
+the command loop renders ahead of it whenever the host is silent (`stream_step`),
+in runs, until 768 words (384 frames, 7.8 ms) wait. Register writes arrive with
+`DSP_CMD_STREAM_PUSH count, count * (cycle, register, value), horizon`:
+
+- each write is stamped with its SID cycle (mod 2^24) and goes into a 256-entry
+  queue; a frame applies the queued writes below its last cycle + 1 before it
+  clocks anything (`wr_due`, reached through a countdown the frame decrements, so a
+  frame without a write pays four cycles). That is the rule the gate's vectors are
+  made with, so a stream is bit-identical to the frame-by-frame run of the trace;
+- the horizon is the cycle below which frames may start; the host sends every
+  write below horizon + 21 with it or before. The DSP never renders past it, so a
+  late host costs audio continuity, not correctness;
+- pseudo registers 32-35 carry the filter coefficient words after a write to
+  $15-$17;
+- `DSP_CMD_STREAM_READ index` returns the render clock, a checksum over the
+  rendered frames, the least ring fill, the queue level, the number of times the
+  transmitter overtook the renderer and the SSI underrun flag.
+
+`make stream-gate` (`tools/dsp/stream_gate.py`, `src/m68k/streamtest.s`) plays
+traces this way under the calibrated Hatari, feeding one PAL frame of writes at a
+time from the 200 Hz tick as the player will: clock and checksum must equal the
+reference's, the transmitter must never overtake, and the run must take the
+frames' playing time. Results (`tools/dsp/stream_gate_results.txt`, both models):
+the music, tone and noise traces are identical and in real time (the ring never
+falls below 710 of 768 words on music and tones, 126 on `noise`); the stress
+traces (`filt_3`, `rand_1`, `rand_2`, `sync_ring`) are identical but 2-30% slower
+than real time. The stream adds about 50 cycles per frame to the synthesis numbers
+below (ring write, checksum, horizon and queue countdowns, two transmit
+interrupts).
+
+## Protocol (v7)
 
 `src/dsp/protocol.inc`: every command is a burst of 24-bit host words and gets
 exactly one reply word. `PING`, `WRITE_REG reg,value`, `READ_REG reg`, `RESET`,
@@ -196,10 +230,9 @@ for every other command.
    | `rand_1`, `rand_2` (random registers: combined waveforms, sync, test) | 1,070-1,350 | 920-1,130 | 260, 323 | 397, 404 |
 
    The numbers cover `cmd_frame` to `fr_done`: synthesis only, not the host-port replies, the
-   register writes, or the stages still to come (SSI, band-limiting). A frame in which a sync
-   source's msb toggles (the oscillators are clocked twice) or several events coincide still
-   exceeds 326 cycles, so the SSI stage must render into a small buffer ahead of the
-   transmitter; real time is proven only when the worst rolling buffer load is measured there.
+   register writes, the stream's own work (see The SSI stream) or band-limiting. A frame in
+   which a sync source's msb toggles (the oscillators are clocked twice) or several events
+   coincide exceeds 326 cycles; the stream's ring absorbs those.
 
    How the frame is built (`sid.asm.in`, all gated bit for bit, `tools/dsp/gate_results_rt.txt`):
    - phase: one 48-bit word `acc << 12` (X = the 12-bit waveform index, Y = the rest), advanced
@@ -227,4 +260,6 @@ for every other command.
    (the reference's `mix_bl` is the filter fed with it).
 3. Filter accuracy items against reSID: the 6581 below fc ~750 and its HP/BP at
    high cutoff (`src/ref/README.md`).
-4. The SSI stream and the player (PSID loader, 6502 core, timestamped writes).
+4. The player (PSID loader, 6502 core) on top of the stream.
+5. Margin for the stress cases: hard sync between all voices with the fastest envelope rate,
+   and random combined-waveform traffic, are 2-30% over real time in the stream.

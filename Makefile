@@ -81,7 +81,7 @@ RESID_TABLES := wave6581_PST wave6581_PS_ wave6581_P_T wave6581__ST \
 REF_EXE := $(if $(filter MINGW% MSYS% CYGWIN%,$(HOST_UNAME)),.exe,)
 
 .PHONY: all help host dsp check run clean tools ratetest-hatari dspprobe-hatari smoke profile-sid \
-	ref ref-gate filter-gate dsp-gate
+	ref ref-gate filter-gate dsp-gate stream-gate
 
 ref: $(REF_BUILD)/ref_run$(REF_EXE) $(REF_BUILD)/oracle_resid$(REF_EXE)
 
@@ -128,6 +128,15 @@ dsp-gate: all $(REF_BUILD)/make_vec$(REF_EXE)
 	$(PYTHON) tools/dsp/voice_dsp_gate.py --build build --make-vec $(REF_BUILD)/make_vec$(REF_EXE) \
 		--vasm $(VASM)$(REF_EXE) --vlink $(VLINK)$(REF_EXE) --hatari $(HATARI) \
 		--tos third_party/f030dsp3d/tools/tos402.rom --vbls 6000 $(DSP_GATE_ARGS) | tee build/dsp-gate-results.txt
+
+# The kernel's SSI stream under Hatari: the same traces played through the
+# transmitter with cycle-stamped writes, bit-identical to the reference and in
+# real time (STREAM_GATE_ARGS=--stress adds the stress traces).
+stream-gate: all $(REF_BUILD)/make_vec$(REF_EXE)
+	$(call require_hatari,stream-gate)
+	$(PYTHON) tools/dsp/stream_gate.py --build build --make-vec $(REF_BUILD)/make_vec$(REF_EXE) \
+		--vasm $(VASM)$(REF_EXE) --vlink $(VLINK)$(REF_EXE) --hatari $(HATARI) \
+		--tos third_party/f030dsp3d/tools/tos402.rom $(STREAM_GATE_ARGS) | tee build/stream-gate-results.txt
 
 # --- sidtrace: PSID -> cycle-stamped SID register trace ------------------------
 # Taps the register stream of libsidplayfp's own player. It derives from

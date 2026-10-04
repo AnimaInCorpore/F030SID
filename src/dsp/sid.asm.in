@@ -27,8 +27,9 @@
 ;
 ; Register conventions: a, b, x0, x1, y0, y1, r0, r1, n0, n1 are scratch
 ; (y holds the frame's cycle count during phase A); y1 holds the written
-; value across the write_reg handlers; r2 points at the wave DAC; r3-r7 and
-; n3, n4, n5, n7 belong to the mixer.
+; value across the write_reg handlers; r2 points at the wave DAC; r0/n0 and
+; r4-r7, n4, n5, n7 belong to the mixer (r0 is loaded every frame); r3/m3 is
+; the SSI transmit interrupt's ring pointer and nothing else may touch it.
 
         include 'ioequ.inc'
         include 'protocol.inc'
@@ -44,8 +45,8 @@ EPS_INC         equ     $09a12f
 ; X short globals ($00-$0f)
 G_EPS           equ     $00             ; Q24 sample-instant fraction
 G_SYNCANY       equ     $01             ; bit 1: some voice has its sync bit set
-G_DTOSC         equ     $02             ; sync frames: cycles left to clock the oscillators
-G_DTMIN         equ     $03             ; sync frames: cycles of the current oscillator step
+G_WREM          equ     $02             ; cycles from this frame's start to the first queued register write
+G_HREM          equ     $03             ; stream: cycles the host has released for rendering (horizon - clock)
 ; The filter's coefficient block is read through r7 with parallel moves, the
 ; routing and mode masks through r4 (Y memory), the states through r5/r6 (L memory).
 F_A1            equ     $04             ; TPT coefficients, Q23 words (host-derived)
@@ -77,6 +78,34 @@ G_ZERO          equ     $40             ; wave zero level (config; the host fold
 G_TTLSTART      equ     $41             ; floating TTL start (config)
 G_MODEL         equ     $42             ; 0 = 6581, 1 = 8580 (config)
 G_SRSTART       equ     $43             ; shift register reset start (config)
+G_DTOSC         equ     $44             ; sync frames: cycles left to clock the oscillators
+G_WRET          equ     $45             ; where a register write handler returns to
+G_STREAM        equ     $46             ; nonzero: the SSI stream runs
+G_DTMIN         equ     $47             ; sync frames: cycles of the current oscillator step
+G_HOR           equ     $48             ; stream: the horizon as the host last gave it
+G_WP            equ     $49             ; stream: ring write pointer
+G_LAST          equ     $4a             ; stream: ring fill after the last rendered frame
+G_PRIMED        equ     $4b             ; stream: the ring reached its target once
+G_FHEAD         equ     $4c             ; write queue: next entry out
+G_FTAIL         equ     $4d             ; write queue: next entry in
+; stream status, DSP_CMD_STREAM_READ index 0..6 (keep the order)
+G_STAT          equ     $50
+G_FRAMES        equ     $50             ; (unused)
+G_SUM           equ     $51             ; checksum of the rendered frames: sum = 3*sum + chip + v1 + v2 + v3
+G_MINFILL       equ     $52             ; least ring fill seen once primed, in words
+G_FCNT          equ     $53             ; write queue entries
+G_CYC           equ     $54             ; render clock, SID cycles mod 2^24
+G_UNDER         equ     $55             ; times the transmitter overtook the renderer
+G_TUE           equ     $56             ; bit 0: the SSI reported a transmit underrun
+
+; The stream's memory (external X, above the tables)
+FIFO_BASE       equ     $3400           ; write queue: 256 entries of cycle, register, value
+FIFO_END        equ     $3700
+FIFO_SIZE       equ     256
+RING_BASE       equ     $3800           ; 512 stereo frames; the SSI interrupt reads it through r3/m3
+RING_WORDS      equ     1024
+RING_TARGET     equ     768             ; render ahead until this many words wait
+WREM_IDLE       equ     $400000         ; G_WREM with nothing queued (re-armed when it runs out)
 
 ;@equates
 
@@ -99,12 +128,22 @@ S_SHADOW        equ     $a8             ; 32-word register shadow
         org     p:$0000
         jmp     start
 
+        org     p:$0010                 ; SSI transmit data: a fast interrupt, the next ring word
+        movep   x:(r3)+,x:m_tx
+        nop
+        org     p:$0012                 ; SSI transmit data with underrun: clear TUE, note it
+        jsr     ssi_underrun
+
         org     p:$0080                 ; P:$0040-$007f belongs to the stage-two loader
 
 ; ---------------------------------------------------------------- one frame
 ; (internal P memory: everything a normal frame executes ends below P:$0200)
 
 cmd_frame:
+        jsr     <frame
+        jmp     <fr_done
+
+frame:
         move    x:<G_EPS,a                      ; n = 20 + carry of the Q24 fraction. The fraction is loaded
         move    y:<K_EPSINC,x0                  ; sign-extended, so the carry out of its 24 bits is the
         add     x0,a        l:<K20,y            ; accumulator's carry. y1 = n, y0 = n << 11
@@ -112,6 +151,10 @@ cmd_frame:
         move    l:<K21,y
 fr_n:   move    a1,x:<G_EPS
         move    y,l:<G_N
+        move    x:<G_WREM,b                     ; a queued register write falls in this frame's cycles?
+        sub     y1,b        #V0_OUT,r0
+        jslt    <wr_due                         ; (returns b1 = the countdown, y)
+        move    b1,x:<G_WREM
         jset    #1,x:<G_SYNCANY,fr_sync
 
 ; Phase A: envelope countdown and oscillator. y1 = n, y0 = n << 11.
@@ -173,16 +216,15 @@ vbend:
 ; routing is a multiply by the weights in Y memory (no branches), the
 ; coefficients stream through r7, and r4/r5/r6/r7 end balanced.
 mix_frame:
-        move    x:(r3)+n3,x0    y:(r4)+,y0      ; v0, mr0
+        move    x:(r0)+n0,x0    y:(r4)+,y0      ; v0, mr0
         mpy     x0,y0,a         y:(r4)+,y1      ; md0
-        mpy     x0,y1,b         x:(r3)+n3,x0  y:(r4)+,y0        ; v1, mr1
+        mpy     x0,y1,b         x:(r0)+n0,x0  y:(r4)+,y0        ; v1, mr1
         mac     x0,y0,a         y:(r4)+,y1      ; md1
-        mac     x0,y1,b         x:(r3)+n3,x0  y:(r4)+,y0        ; v2, mr2
+        mac     x0,y1,b         x:(r0)+n0,x0  y:(r4)+,y0        ; v2, mr2
         mac     x0,y0,a         y:(r4)-n4,y1    ; md2 (r4 back at mr0)
         mac     x0,y1,b
         asl     b                               ; b1 = direct sum
         asl     a               b1,y:<T_D       ; a1 = routed sum >> 2
-        move    #V0_OUT,r3                      ; (balanced again for the next frame)
         jclr    #0,x:<F_RT,mx_nofilt
         move    a1,y:<T_X
         move    a1,b                            ; b = x << 24
@@ -245,6 +287,8 @@ mx_tail:
         rnd     b               a,l:(r6)-       ; xh = 2*y2 - xh
         move    b1,y:<T_OUT
 mix_end:
+        rts
+
         ; profiling mark: the frame is computed, the replies follow
 fr_done:
         move    x:<V0_OUT,a             ; the three voice outputs
@@ -262,8 +306,12 @@ fr_done:
         ; (falls into the command loop)
 
 main_loop:
-        jclr    #0,x:m_hsr,main_loop    ; HRDF: a command word arrived
-        movep   x:m_hrx,a
+        jset    #0,x:m_hsr,ml_cmd       ; HRDF: a command word arrived
+        move    x:G_STREAM,a
+        tst     a
+        jeq     main_loop
+        jmp     stream_step
+ml_cmd: movep   x:m_hrx,a
         move    #>DSP_CMD_FRAME,x0
         cmp     x0,a
         jeq     cmd_frame
@@ -291,6 +339,18 @@ main_loop:
         move    #>DSP_CMD_RESET,x0
         cmp     x0,a
         jeq     cmd_reset
+        move    #>DSP_CMD_STREAM_PUSH,x0
+        cmp     x0,a
+        jeq     cmd_stream_push
+        move    #>DSP_CMD_STREAM_READ,x0
+        cmp     x0,a
+        jeq     cmd_stream_read
+        move    #>DSP_CMD_STREAM_START,x0
+        cmp     x0,a
+        jeq     cmd_stream_start
+        move    #>DSP_CMD_STREAM_STOP,x0
+        cmp     x0,a
+        jeq     cmd_stream_stop
 reply_error:
         move    #>DSP_REPLY_ERROR,a
         jmp     reply
@@ -332,6 +392,258 @@ cmd_load_y:                             ; address, count, words -> Y memory
 load_y_done:
         jmp     reply_ok
 
+
+; ------------------------------------------------------------- the SSI stream
+; The transmit interrupt plays a ring of 512 stereo frames; the command loop
+; renders ahead of it whenever the host has nothing to say (stream_step),
+; until RING_TARGET words wait. Register writes arrive stamped with their SID
+; cycle (mod 2^24), in order, with a horizon: the cycle up to which the host
+; has delivered everything. A frame is rendered when its first cycle is below
+; the horizon, and takes the queued writes below its last cycle + 1 first -
+; the rule the gate's vectors are made with, so a stream is bit-identical to
+; the frame-by-frame run of the same trace.
+
+ssi_underrun:                           ; long interrupt: SSISR then TX clears TUE
+        movep   x:m_sr,x:G_TUE+1
+        movep   x:(r3)+,x:m_tx
+        bset    #0,x:G_TUE
+        rti
+
+cmd_stream_start:
+        clr     a
+        move    #>G_WRET+1,r0
+        rep     #$57-$46
+        move    a,x:(r0)+               ; stream variables and status
+        move    #>RING_BASE,r0
+        rep     #RING_WORDS
+        move    a,x:(r0)+
+        move    #>RING_BASE,r3
+        move    #>RING_WORDS-1,m3
+        move    r3,x:G_WP
+        move    #>FIFO_BASE,x0
+        move    x0,x:G_FHEAD
+        move    x0,x:G_FTAIL
+        move    #>$7fffff,x0
+        move    x0,x:G_MINFILL
+        move    #>WREM_IDLE,x0
+        move    x0,x:<G_WREM
+        move    #>1,x0
+        move    x0,x:G_STREAM
+        movep   #$1f8,x:m_pcc           ; Port C pins to the SSI
+        movep   #0,x:m_crb
+        movep   #$4100,x:m_cra          ; 16-bit words, two per frame
+        movep   #$3000,x:m_ipr          ; SSI at priority 2
+        movep   #$5a00,x:m_crb          ; network mode, transmitter and its interrupt on
+        andi    #$fc,mr
+        jmp     reply_ok
+
+cmd_stream_stop:
+        ori     #$03,mr
+        movep   #0,x:m_crb
+        move    #>$ffff,m3
+        clr     a
+        move    a1,x:G_STREAM
+        move    a1,x:G_FCNT
+        move    #>WREM_IDLE,x0
+        move    x0,x:<G_WREM
+        jmp     reply_ok
+
+stream_clock:                           ; a1 = the render clock: horizon - released cycles (mod 2^24)
+        move    x:G_HOR,a
+        move    x:<G_HREM,x0
+        sub     x0,a
+        rts
+
+cmd_stream_read:                        ; index -> status word
+        jsr     stream_clock
+        move    a1,x:G_CYC
+        jclr    #0,x:m_hsr,*
+        movep   x:m_hrx,x1
+        move    x1,n1
+        move    #>G_STAT,r1
+        nop
+        move    x:(r1+n1),a
+        jmp     reply
+
+cmd_stream_push:                        ; count, count * (cycle, register, value), horizon -> queue entries free
+        jclr    #0,x:m_hsr,*
+        movep   x:m_hrx,x1
+        move    x1,a
+        tst     a
+        jeq     sp_hor
+        move    x:G_FCNT,b
+        add     x1,b
+        move    b1,x:G_FCNT
+        move    x:G_FTAIL,r1
+        move    #>FIFO_END,x0
+        do      x1,sp_in
+        jclr    #0,x:m_hsr,*
+        movep   x:m_hrx,x:(r1)+
+        jclr    #0,x:m_hsr,*
+        movep   x:m_hrx,x:(r1)+
+        jclr    #0,x:m_hsr,*
+        movep   x:m_hrx,x:(r1)+
+        move    r1,a
+        cmp     x0,a
+        jne     sp_nowrap
+        move    #>FIFO_BASE,r1
+sp_nowrap:
+        nop
+        nop
+sp_in:
+        move    r1,x:G_FTAIL
+        move    x:G_FHEAD,r1            ; the countdown to the queue's head
+        jsr     stream_clock
+        move    a1,x0
+        move    x:(r1),a
+        sub     x0,a
+        move    a1,b                    ; (mod 2^24, signed)
+        move    b1,x:<G_WREM
+sp_hor: jclr    #0,x:m_hsr,*
+        movep   x:m_hrx,a
+        move    x:G_HOR,x0
+        move    a1,x:G_HOR
+        sub     x0,a
+        move    a1,b                    ; the horizon's advance
+        move    x:<G_HREM,a
+        add     b,a
+        move    a1,x:<G_HREM
+        move    #>FIFO_SIZE,a
+        move    x:G_FCNT,x0
+        sub     x0,a
+        jmp     reply
+
+; A queued write is due: b = G_WREM - n < 0. Apply every write below the
+; frame's end, then return b1 = the new head's countdown less n.
+wr_due:
+        move    x:G_FCNT,a
+        tst     a
+        jeq     wq_idle
+        move    #>1,x0
+        sub     x0,a
+        move    a1,x:G_FCNT
+        move    x:G_FHEAD,r1
+        move    #>wq_next,x0
+        move    x0,x:G_WRET
+        move    x:(r1)+,x0
+        move    x:(r1)+,x1
+        move    x:(r1)+,y1
+        move    r1,a
+        move    #>FIFO_END,x0
+        cmp     x0,a
+        jne     wq_nowrap
+        move    #>FIFO_BASE,r1
+wq_nowrap:
+        move    r1,x:G_FHEAD
+        jmp     write_dispatch
+wq_next:
+        move    x:G_FCNT,a
+        tst     a
+        jeq     wq_idle
+        move    x:G_FHEAD,r1
+        jsr     stream_clock
+        move    a1,x0
+        move    x:(r1),a
+        sub     x0,a
+        move    a1,b
+        move    x:<G_N,x0
+        sub     x0,b
+        jlt     wr_due
+        jmp     wq_ret
+wq_idle:
+        move    #>WREM_IDLE,b
+wq_ret: move    l:<G_N,y
+        move    #V0_OUT,r0
+        rts
+
+; One step of the stream: render frames into the ring while there is room,
+; the host's horizon allows and the host is silent.
+stream_step:
+        move    r3,x0                   ; the transmitter's position
+        move    x:G_WP,a
+        sub     x0,a
+        move    #>RING_WORDS-1,x0
+        and     x0,a
+        move    a1,a                    ; words rendered ahead of it (the difference may have been negative)
+        move    x:G_PRIMED,b
+        tst     b
+        jeq     ss_tgt
+        move    x:G_LAST,x0
+        cmp     x0,a
+        jle     ss_ok
+        move    x:G_UNDER,b             ; more than after the last frame: it wrapped past the write pointer
+        move    #>1,x1
+        add     x1,b
+        move    b1,x:G_UNDER
+ss_ok:  move    x:G_MINFILL,x0
+        cmp     x0,a
+        jge     ss_tgt
+        move    a1,x:G_MINFILL
+ss_tgt: move    a1,x:G_LAST
+        move    #>RING_TARGET,b
+        sub     a,b                     ; room, in words
+        jgt     ss_room
+        move    #>1,x0
+        move    x0,x:G_PRIMED
+        jmp     main_loop
+ss_room:
+        move    x:G_WP,x0               ; frames in this run: the room, at most up to the ring's end
+        move    #>RING_BASE+RING_WORDS,a
+        sub     x0,a
+        cmp     a,b
+        tgt     a,b
+        asr     b                       ; frames (an odd word of room is dropped)
+        move    b1,b
+        move    b1,x0
+        tst     b
+        jeq     main_loop
+        asl     b           x:G_LAST,a
+        add     b,a
+        move    a1,x:G_LAST
+        do      x0,ss_end
+        jset    #0,x:m_hsr,ss_break     ; the host calls
+        move    x:<G_HREM,a
+        tst     a
+        jle     ss_break                ; the host has not released the next frame
+        jsr     <frame
+        move    x:G_SUM,x1              ; checksum = 3 * checksum + chip + voices (mod 2^24)
+        move    x1,a
+        asl     a           y:<T_OUT,x0
+        add     x1,a        x:<V0_OUT,y0
+        add     x0,a        x:<V1_OUT,x1
+        add     y0,a        x:<V2_OUT,y0
+        add     x1,a
+        add     y0,a
+        move    a1,x:G_SUM
+        move    #>$80,y0                ; the chip output, 16 bits, at the top of the SSI word: << 8 across
+        mpy     x0,y0,a     x:G_WP,r1   ; a1:a0, then through the limiter
+        move    a1,b2
+        move    a0,b1
+        move    b,x:(r1)+               ; left and right
+        move    b,x:(r1)+
+        move    r1,x:G_WP
+        move    x:<G_HREM,a
+        move    x:<G_N,x0
+        sub     x0,a
+        move    a1,x:<G_HREM
+ss_end:
+        jmp     ss_wrap
+ss_break:
+        dc      $00008c                 ; enddo (written as data: the assembler wants it inside the loop's text)
+        move    r3,x0                   ; the run ended early: what is ahead now
+        move    x:G_WP,a
+        sub     x0,a
+        move    #>RING_WORDS-1,x0
+        and     x0,a
+        move    a1,x:G_LAST
+ss_wrap:
+        move    x:G_WP,a                ; the write pointer wraps at the ring's end
+        move    #>RING_BASE+RING_WORDS,x0
+        cmp     x0,a
+        jne     main_loop
+        move    #>RING_BASE,x0
+        move    x0,x:G_WP
+        jmp     main_loop
 
 ; ============================================================================
 ; The frame's out-of-line side, per voice: the oscillator events and the
@@ -823,10 +1135,10 @@ cmd_read:                               ; reg -> shadow value
         move    #>31,x0
         cmp     x0,a
         jgt     reply_error
-        move    x1,n0
-        move    #>S_SHADOW,r0
+        move    x1,n1
+        move    #>S_SHADOW,r1
         nop
-        move    x:(r0+n0),a
+        move    x:(r1+n1),a
         jmp     reply
 
 cmd_write:                              ; reg, value
@@ -834,14 +1146,21 @@ cmd_write:                              ; reg, value
         movep   x:m_hrx,x1
         jclr    #0,x:m_hsr,*
         movep   x:m_hrx,y1
+        move    #>reply_ok,x0
+        move    x0,x:G_WRET
+
+; One register write: x1 = register, y1 = value; ends at wr_done, which
+; returns through G_WRET. Registers 32-35 are not the SID's: they carry the
+; filter coefficient words a1, a2, a3, k4 in the write queue.
+write_dispatch:
         move    x1,a
         move    #>31,x0
         cmp     x0,a
-        jgt     reply_ok                ; not a SID register
-        move    x1,n0
-        move    #>S_SHADOW,r0
+        jgt     wd_coef
+        move    x1,n1
+        move    #>S_SHADOW,r1
         nop
-        move    y1,x:(r0+n0)            ; shadow for READ_REG
+        move    y1,x:(r1+n1)            ; shadow for READ_REG
         move    x1,a
         move    #>21,x0
         cmp     x0,a
@@ -859,6 +1178,18 @@ cw_not2:
         sub     x0,a
         move    a1,x1
         jmp     write_reg_1
+wd_coef:
+        move    #>35,x0
+        cmp     x0,a
+        jgt     wr_done
+        move    x1,n1
+        move    #>F_A1-32,r1
+        nop
+        move    y1,x:(r1+n1)
+wr_done:
+        move    x:G_WRET,r1
+        nop
+        jmp     (r1)
 
 cw_filter:                              ; a = reg (21..31), y1 = value. fc is the host's business:
         move    #>23,x0                 ; it only needs to be in the shadow.
@@ -867,14 +1198,14 @@ cw_filter:                              ; a = reg (21..31), y1 = value. fc is th
         move    #>24,x0
         cmp     x0,a
         jeq     cw_modevol
-        jmp     reply_ok
+        jmp     wr_done
 cw_resfilt:                             ; $17: routing in the low nibble
         move    #>7,x0
         move    y1,a
         and     x0,a
         move    a1,x:F_FILT
         jsr     update_masks
-        jmp     reply_ok
+        jmp     wr_done
 cw_modevol:                             ; $18: mode in the high nibble, volume in the low
         move    #>$0f,x0
         move    y1,a
@@ -890,7 +1221,7 @@ cw_modevol:                             ; $18: mode in the high nibble, volume i
         lsr     a
         move    a1,x:F_MODE
         jsr     update_masks
-        jmp     reply_ok
+        jmp     wr_done
 
 update_masks:                           ; routing and mode registers -> the Y weights, F_RT
         move    x:F_FILT,x1
@@ -965,8 +1296,8 @@ fr_sync:
         move    a1,y:<G_PRE
         move    x:<G_N,a
 fr_osc_loop:                            ; a1 = cycles left
-        move    a1,x:<G_DTOSC
-        move    a1,x:<G_DTMIN
+        move    a1,x:G_DTOSC
+        move    a1,x:G_DTMIN
         move    y:<G_PRE,y0
 ;@voice
         jclr    #1,x:<DST_SYNC,sck_no   ; a sync source: can its msb toggle before the last cycle? S_THR is
@@ -979,7 +1310,7 @@ fr_osc_loop:                            ; a1 = cycles left
         move    y:<G_PRE,y0
 sck_no:
 ;@endvoice
-        move    x:<G_DTMIN,x0           ; the step's cycles << 11, the oscillators' multiplier
+        move    x:G_DTMIN,x0           ; the step's cycles << 11, the oscillators' multiplier
         move    #>$400,y0
         mpy     x0,y0,a     y:<G_PRE,b
         move    a0,y:<G_DT11
@@ -1003,8 +1334,8 @@ sck_no:
 sy_do:  jsr     sync_reset
 sy_done:
 ;@endvoice
-        move    x:<G_DTOSC,a
-        move    x:<G_DTMIN,x0
+        move    x:G_DTOSC,a
+        move    x:G_DTMIN,x0
         sub     x0,a
         jne     fr_osc_loop
         jclr    #0,y:<G_LATCH,vb_0
@@ -1066,11 +1397,12 @@ reset_state:                            ; the model's power-on state
         move    #>EXT_LP_W,x0
         move    x0,x:<F_LPW
         move    #0,r4                   ; the pointers the frame keeps balanced
-        move    #V0_OUT,r3
         move    #>F_S1,r5
         move    #>F_XL,r6
         move    #F_A1,r7
-        move    #>HSIZE,n3
+        move    #>HSIZE,n0
+        move    #>WREM_IDLE,x0
+        move    x0,x:<G_WREM
         move    #>5,n4
         move    #>1,n5
         move    #>5,n7
@@ -1107,7 +1439,7 @@ write_reg:
         move    #>6,x0
         cmp     x0,a
         jeq     wr_sr
-        jmp     reply_ok
+        jmp     wr_done
 
 wr_freq_lo:
         move    x:<S_FREQ,a
@@ -1127,9 +1459,9 @@ wr_freq_hi:
         or      x0,a
 wr_freq_set:
         move    a1,x:<S_FREQ
-        jset    #3,x:<S_TEST,reply_ok   ; the test bit holds the oscillator
+        jset    #3,x:<S_TEST,wr_done   ; the test bit holds the oscillator
         move    a1,x:<S_FREQE
-        jmp     reply_ok
+        jmp     wr_done
 
 wr_pw_lo:
         move    x:<S_PW,a
@@ -1139,7 +1471,7 @@ wr_pw_lo:
         or      x0,a
         move    a1,x:<S_PW
         jsr     calc_pulse_out
-        jmp     reply_ok
+        jmp     wr_done
 
 wr_pw_hi:
         move    x:<S_PW,a
@@ -1154,7 +1486,7 @@ wr_pw_hi:
         or      x0,a
         move    a1,x:<S_PW
         jsr     calc_pulse_out
-        jmp     reply_ok
+        jmp     wr_done
 
 wr_ad:
         move    y1,a
@@ -1173,12 +1505,12 @@ wr_ad:
 wad_notatk:
         move    #>ST_DECSUS,x0
         cmp     x0,a
-        jne     reply_ok
+        jne     wr_done
         move    y:S_DECAY,a
 wad_set:
         jsr     rate_lookup
         jsr     env_newper
-        jmp     reply_ok
+        jmp     wr_done
 
 wr_sr:
         move    y1,a
@@ -1199,11 +1531,11 @@ wr_sr:
         move    y:<S_STATE,a
         move    #>ST_RELEASE,x0
         cmp     x0,a
-        jne     reply_ok
+        jne     wr_done
         move    y:S_RELEASE,a
         jsr     rate_lookup
         jsr     env_newper
-        jmp     reply_ok
+        jmp     wr_done
 
 ; WaveformGenerator::writeCONTROL_REG, then EnvelopeGenerator's
 wr_control:
@@ -1296,7 +1628,7 @@ wc_handler:
         move    a1,y:S_TMPA             ; gate_next
         move    y:S_GATE,x0
         cmp     x0,a
-        jeq     reply_ok
+        jeq     wr_done
         jset    #1,y:<S_PIPE,wc_desynced
         jsr     env_desync              ; the rate counter as a number: the period is about to change
 wc_desynced:
@@ -1321,7 +1653,7 @@ wc_pipe:
         move    a1,y:S_GATE
         move    #>eh_pipe,x0            ; the next frame's envelope step applies the state change
         move    x0,y:<S_EH
-        jmp     reply_ok
+        jmp     wr_done
 
 reset_voice:                            ; the voice's power-on state (its variables are already zero)
         move    #>hfloat,x0
@@ -1657,7 +1989,7 @@ wso_post:
 ; when the phase after dt_min - 1 cycles is at or past the toggle; only then is
 ; the count searched. (S_FREQE is zero under the test bit: the phase is held.)
 sync_check:
-        move    x:<G_DTMIN,a
+        move    x:G_DTMIN,a
         move    #>1,x0
         sub     x0,a
         move    a1,x0
@@ -1690,7 +2022,7 @@ sc_back:
         jge     sc_back
         move    (r1)+
         nop
-        move    r1,x:<G_DTMIN
+        move    r1,x:G_DTMIN
 sc_done:
         rts
 
@@ -1699,8 +2031,8 @@ sc_done:
 ; step that level is what the output stage sees, so it is latched (S_MSB bit 1)
 ; until the voice's next clock, which S_THR = 0 sends through os_gen.
 sync_reset:
-        move    x:<G_DTOSC,a
-        move    x:<G_DTMIN,x0
+        move    x:G_DTOSC,a
+        move    x:G_DTMIN,x0
         cmp     x0,a
         jne     sr_clr
         jset    #3,x:<DST_TEST,sr_clr   ; (under the test bit the pulse is high anyway)

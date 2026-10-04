@@ -1,7 +1,7 @@
 /*
  * Turn a register trace into a DSP test vector and the expected output.
  *
- *   make_vec <6581|8580> <trace> <resid_dir> <vec.i> <expected.txt>
+ *   make_vec <6581|8580> <trace> <resid_dir> <vec.i> <expected.txt> [stream_expected.txt]
  *
  * vec.i is an m68k include for tools/dsp/voicetest.s: the tables the DSP needs
  * (rate periods, sustain levels, envelope and wave DAC in the kernel's scaling), the chip constants,
@@ -67,6 +67,7 @@ int main(int argc, char **argv)
     size_t nw, wi = 0, k;
     long long end, c = 0;
     long nframes = 0;
+    uint32_t checksum = 0;
     sid_model_t model;
     unsigned tmp[4096];
     FILE *vec, *expf;
@@ -151,7 +152,27 @@ int main(int argc, char **argv)
             sid_ref_frame(&s, &fr);
             c += fr.n;
             fprintf(expf, "%d %d %d %d\n", fr.naive[0], fr.naive[1], fr.naive[2], fr.mix);
+            checksum = 3 * checksum + (uint32_t)(fr.mix + fr.naive[0] + fr.naive[1] + fr.naive[2]);
             nframes++;
+        }
+        /* The same run as a stream (src/m68k/streamtest.s): the writes stamped with
+         * their SID cycle, a write to $15-$17 followed by the four coefficient
+         * words as pseudo registers 32-35; and what the DSP's stream status must
+         * read afterwards (stream_expected.txt beside expected.txt). */
+        fprintf(vec, "vec_end equ %lld\nvec_stream:\n", end);
+        for (k = 0; k < nw; k++) {
+            fprintf(vec, "        dc.l    %lld,%u,%u\n", w[k].cycle, w[k].reg, w[k].value & 0xff);
+            if (w[k].reg >= 21 && w[k].reg <= 23)
+                fprintf(vec, "        dc.l    %lld,32,%u,%lld,33,%u,%lld,34,%u,%lld,35,%u\n",
+                        w[k].cycle, (unsigned)ec[k].a1 & 0xffffff, w[k].cycle, (unsigned)ec[k].a2 & 0xffffff,
+                        w[k].cycle, (unsigned)ec[k].a3 & 0xffffff, w[k].cycle, (unsigned)ec[k].k4 & 0xffffff);
+        }
+        fprintf(vec, "        dc.l    $7fffffff,0,0\n");
+        if (argc > 6) {
+            FILE *sf = fopen(argv[6], "w");
+            if (!sf) { perror(argv[6]); return 1; }
+            fprintf(sf, "%ld %u %lld\n", nframes, (unsigned)(checksum & 0xffffff), c);
+            fclose(sf);
         }
         fprintf(vec, "vec_frames equ %ld\n", nframes);
         fprintf(vec, "vec_events:\n");

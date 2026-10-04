@@ -3,7 +3,7 @@
 ; Every exchange is a burst of 24-bit host words followed by exactly one
 ; reply word. Commands are listed with their trailing argument words.
 
-DSP_PROTOCOL_VERSION equ     6
+DSP_PROTOCOL_VERSION equ     7
 
 DSP_CMD_PING        equ     $010000     ; -> DSP_REPLY_HELLO
 DSP_CMD_WRITE_REG   equ     $020000     ; reg, value -> OK
@@ -16,6 +16,17 @@ DSP_CMD_CONFIG      equ     $0b0000     ; wave zero, floating TTL, model (0 = 65
 DSP_CMD_FRAME       equ     $0c0000     ; -> four words: the voice 1, 2 and 3 outputs and the chip output of the next codec frame
 DSP_CMD_LOAD_Y      equ     $0d0000     ; address, count, count words (Y memory) -> OK
 DSP_CMD_FILTER      equ     $0e0000     ; a1, a2, a3, k4 (Q23 coefficient words, host-derived) -> OK
+; The SSI stream (docs/dsp-kernel.md): the DSP renders ahead into a ring the SSI
+; transmitter plays. Writes are stamped with their SID cycle (mod 2^24), sent in
+; order; the horizon is the cycle below which frames may start, and every write
+; below horizon + 21 must have been sent by then. Register numbers 32-35 in a
+; queued write carry the filter coefficient words a1, a2, a3, k4.
+DSP_CMD_STREAM_START equ    $100000     ; -> OK (clock 0, queue empty, transmitter on)
+DSP_CMD_STREAM_PUSH equ     $110000     ; count, count * (cycle, register, value), horizon -> queue entries free
+DSP_CMD_STREAM_READ equ     $120000     ; index -> status word: 0 frames rendered, 1 checksum, 2 least ring
+                                        ; fill (words), 3 queue entries, 4 render clock, 5 overtakes, 6 SSI underrun flag
+DSP_CMD_STREAM_STOP equ     $130000     ; -> OK
+DSP_STREAM_QUEUE    equ     256         ; write queue entries
 
 ; The SID register file: 25 write-only registers plus the 4 read-only ones,
 ; mirrored in a 32-word X-memory shadow indexed by the SID address.
