@@ -160,6 +160,7 @@ const uint16_t *sid_tab_env_dac(sid_model_t m) { return env_dac[m]; }
 const uint16_t *sid_tab_rate_period(void) { return rate_counter_period; }
 const uint8_t *sid_tab_sustain_level(void) { return sustain_level; }
 const uint16_t *sid_tab_wave(sid_model_t m, int w) { return wave_table[m][w & 7]; }
+const int32_t *sid_tab_blep(void) { return blep_step; }
 int32_t sid_shift_reset_start(sid_model_t m)
 {
     return m == SID_MOS6581 ? SHIFT_REGISTER_RESET_START_6581 : SHIFT_REGISTER_RESET_START_8580;
@@ -519,7 +520,6 @@ static void wave_reset(sid_voice_t *w)
     wave_set_noise_output(w);
     w->waveform_output = 0;
     w->floating_output_ttl = 0;
-    w->recip = 0;
 }
 
 /* ------------------------------------------------------------------ chip */
@@ -574,9 +574,6 @@ void sid_ref_write(sid_ref_t *s, unsigned reg, unsigned value)
     case 5: env_write_attack_decay(v, value); break;
     case 6: env_write_sustain_release(v, value); break;
     }
-
-    /* DSP: derived by the 68030 when the frequency changes. */
-    v->recip = v->freq ? ((uint64_t)1 << 62) / ((uint64_t)v->freq * (uint64_t)SID_CYC_Q24) : 0;
 }
 
 static void synchronize(sid_ref_t *s, int i)
@@ -628,69 +625,75 @@ static int32_t voice_output(const sid_ref_t *s, const sid_voice_t *v)
            (int32_t)env_dac[s->model][v->envelope_counter];
 }
 
+/* MPY / MAC product of two 24-bit words, fractional mode (the DSP's 2*a*b). */
+static inline int64_t mpy(int32_t a, int32_t b) { return 2 * (int64_t)a * (int64_t)b; }
+
 /*
- * 4-point polyBLEP residual for an edge of height `jump` (wave DAC units) at
- * phase `edge`, seen from the sample phase `ph`; result in Q12 DAC units.
+ * The band-limited voice output, in the arithmetic of the DSP kernel (every
+ * step is one of its instruction groups; the kernel is gated bit for bit
+ * against this).
  *
- * The distance to the edge in frames is delta / (freq * cycles per frame);
- * the division is a multiply by the per-frequency reciprocal.
- * DSP: sub, abs, mpy by recip (mantissa + shift), compare to 2 frames,
- * table fetch with linear interpolation, mpy by jump.
+ * The phase is a 48-bit word, acc << 12 (ix : fraction). The sample instant
+ * lies eps cycles after the frame's integer cycle, so the waveform is read at
+ * phase + freq * eps: one MAC with eps >> 13.
+ *
+ * A saw or pulse edge within two frames of the sample instant is corrected
+ * with a 4-point polyBLEP: the distance d to the edge (48-bit, signed) in
+ * frames is d / D, D = freq * cycles per frame = (freq * BL_CYC16) >> 16 phase
+ * units; pos = d * 4 / D is that distance in 1/64 frame, Q8 (16 quotient bits
+ * of the DSP's DIV), an index and an interpolation fraction into blep_step.
+ * The correction is jump * step, added to the DAC word before the envelope
+ * multiply. Only plain triangle, saw and pulse are treated; noise, combined
+ * waveforms, ring modulation and the test bit pass through as they are.
  */
-static int64_t blep(const sid_voice_t *v, uint32_t ph, uint32_t edge, int32_t jump)
+#define BL_CYC16 ((int32_t)(SID_CYC_Q24 >> 8))       /* cycles per frame, Q16 */
+
+static int32_t blep48(int32_t D, int64_t ph48, int32_t edge_ix, int32_t jumpw)
 {
-    int32_t delta = (int32_t)((ph - edge) & 0xffffff);
-    uint64_t pos;
-    uint32_t idx, frac;
-    int32_t t;
-    int64_t r;
-    int neg = 0;
+    const int64_t half = (int64_t)0x800 << 24, full = (int64_t)0x1000 << 24;
+    int64_t d = ph48 - ((int64_t)edge_ix << 24);
+    int32_t pos, idx, frac, t, cw;
+    int neg;
 
-    if (delta >= 0x800000) delta -= 0x1000000;
-    if (delta < 0) { delta = -delta; neg = 1; }
-
-    pos = ((uint64_t)delta * v->recip) >> 24;        /* 1/64 frame, Q8 */
-    if (pos >= (uint64_t)(2 * 64) << 8) return 0;    /* beyond +-2 frames */
-    idx = (uint32_t)(pos >> 8);
-    frac = (uint32_t)(pos & 255);
-    t = blep_step[idx] + (int32_t)(((int64_t)(blep_step[idx + 1] - blep_step[idx]) * frac) >> 8);
-
-    r = ((int64_t)jump * t) >> 11;                   /* Q23 -> Q12 */
-    return neg ? -r : r;
+    if (d >= half) d -= full;                           /* nearest image of the edge */
+    else if (d < -half) d += full;
+    neg = d < 0;
+    if (neg) d = -d;
+    if (d >= ((int64_t)(2 * D) << 12)) return 0;        /* beyond +-2 frames */
+    pos = (int32_t)((d << 2) / D);
+    idx = pos >> 8;
+    frac = pos & 255;
+    t = blep_step[idx] + (int32_t)(mpy(blep_step[idx + 1] - blep_step[idx], frac << 15) >> 24);
+    cw = (int32_t)(mpy(jumpw, t) >> 24);
+    return neg ? -cw : cw;
 }
 
-/* Output for the uniform sample instant eps (Q24 cycle fraction) after the
- * voice's integer cycle. Only the single plain waveforms (triangle, saw,
- * pulse) are corrected; noise and combined waveforms have no clean edges and
- * pass through unchanged. */
-static int32_t voice_output_bl(const sid_ref_t *s, const sid_voice_t *v, const sid_voice_t *src, uint32_t eps)
+static int32_t voice_output_bl(const sid_ref_t *s, const sid_voice_t *v, uint32_t eps)
 {
     const sid_model_t m = s->model;
-    uint32_t w = v->waveform, ph, ix, pulse, code;
-    int32_t dac;
-    int64_t wave_q12;
+    const int64_t full = (int64_t)0x1000 << 24;
+    const uint32_t w = v->waveform;
+    int32_t D, ix, code, dacw, jumpw;
+    int64_t ph48;
 
-    if ((w != 1 && w != 2 && w != 4) || v->test || !v->freq)
+    if (!((w == 1 && !v->ring_msb_mask) || w == 2 || w == 4) || v->test || !v->freq)
         return voice_output(s, v);
 
-    /* Phase at the true sample instant: the integer-cycle phase plus freq * eps. */
-    ph = (v->acc + (uint32_t)(((uint64_t)v->freq * eps) >> 24)) & 0xffffff;
+    D = (int32_t)(((int64_t)v->freq * BL_CYC16) >> 16);
+    ph48 = ((int64_t)v->acc << 12) + mpy((int32_t)v->freq, (int32_t)(eps >> 13));
+    if (ph48 >= full) ph48 -= full;
+    ix = (int32_t)(ph48 >> 24);
 
-    ix = (ph ^ (~src->acc & v->ring_msb_mask)) >> 12;
-    pulse = ((ph >> 12) >= v->pw) ? 0xfff : 0x000;
-    code = wave_table[m][w][ix] & (v->no_pulse | pulse) & v->no_noise_or_noise_output;
-    dac = (int32_t)wave_dac[m][code] - wave_zero[m];
-    wave_q12 = (int64_t)dac << 12;
-
+    code = w == 1 ? (((ix & 0x800) ? ix ^ 0x7ff : ix) & 0x7ff) << 1 : w == 2 ? ix : (ix >= (int32_t)v->pw ? 0xfff : 0);
+    dacw = ((int32_t)wave_dac[m][code] - wave_zero[m]) << 10;
+    jumpw = ((int32_t)wave_dac[m][0xfff] - (int32_t)wave_dac[m][0]) << 10;
     if (w == 2) {
-        wave_q12 += blep(v, ph, 0, (int32_t)wave_dac[m][0] - (int32_t)wave_dac[m][0xfff]);
+        dacw -= blep48(D, ph48, 0, jumpw);              /* the saw falls at the wrap */
     } else if (w == 4 && v->pw != 0) {
-        int32_t jump = (int32_t)wave_dac[m][0xfff] - (int32_t)wave_dac[m][0];
-        wave_q12 += blep(v, ph, v->pw << 12, jump);       /* rising edge */
-        wave_q12 += blep(v, ph, 0, -jump);                /* falling edge at the wrap */
+        dacw += blep48(D, ph48, (int32_t)v->pw, jumpw); /* rising edge */
+        dacw -= blep48(D, ph48, 0, jumpw);              /* falling edge at the wrap */
     }
-
-    return (int32_t)((wave_q12 * (int32_t)env_dac[m][v->envelope_counter]) >> 12);
+    return (int32_t)(mpy(dacw, (int32_t)env_dac[m][v->envelope_counter] << 13) >> 24);
 }
 
 
@@ -722,9 +725,6 @@ void sid_mix_config(sid_model_t model, int32_t *hp_cancel, int32_t *mix_k, int32
     *mix_k = mix_k23[model];
     *filter_gain = FILTER_GAIN;
 }
-
-/* MPY / MAC product of two 24-bit words, fractional mode. */
-static inline int64_t mpy(int32_t a, int32_t b) { return 2 * (int64_t)a * (int64_t)b; }
 
 /* Read a 56-bit accumulator as a 24-bit word (a1, saturated by the limiter). */
 static inline int32_t lim(int64_t acc)
@@ -862,7 +862,7 @@ void sid_ref_frame(sid_ref_t *s, sid_frame_t *f)
     clock_voices(s, f->n);
     for (i = 0; i < 3; i++) {
         f->naive[i] = voice_output(s, &s->v[i]);
-        f->bl[i] = voice_output_bl(s, &s->v[i], &s->v[(i + 2) % 3], s->eps);
+        f->bl[i] = voice_output_bl(s, &s->v[i], s->eps);
     }
     f->mix = mix_output(s, &s->st[0], f->naive);
     f->mix_bl = mix_output(s, &s->st[1], f->bl);

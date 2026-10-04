@@ -81,8 +81,6 @@ typedef struct {
     sid_env_state_t state, next_state;
     uint32_t attack, decay, sustain, release;
     uint32_t gate;
-    /* derived on a frequency write (host side on the DSP) */
-    uint64_t recip;               /* 2^62 / (freq * SID_CYC_Q24), 0 if freq == 0 */
 } sid_voice_t;
 
 /* Filter, mixer and external filter (registers $15-$18). The coefficient words
@@ -134,6 +132,7 @@ const uint16_t *sid_tab_env_dac(sid_model_t model);    /* 256 entries */
 const uint16_t *sid_tab_rate_period(void);             /* 16 entries */
 const uint8_t  *sid_tab_sustain_level(void);           /* 16 entries */
 const uint16_t *sid_tab_wave(sid_model_t model, int waveform); /* 4096 entries, waveform 0..7 */
+const int32_t  *sid_tab_blep(void);                    /* 129 entries: polyBLEP step residual, Q23 */
 int32_t sid_shift_reset_start(sid_model_t model);
 int32_t sid_wave_zero(sid_model_t model);
 int32_t sid_floating_ttl_start(sid_model_t model);

@@ -3,7 +3,7 @@
 ; Every exchange is a burst of 24-bit host words followed by exactly one
 ; reply word. Commands are listed with their trailing argument words.
 
-DSP_PROTOCOL_VERSION equ     8
+DSP_PROTOCOL_VERSION equ     9
 
 DSP_CMD_PING        equ     $010000     ; -> DSP_REPLY_HELLO
 DSP_CMD_WRITE_REG   equ     $020000     ; reg, value -> OK
@@ -49,8 +49,10 @@ DSP_X_ENV_TAB       equ     $0200       ; 512 words, a pair per envelope value: 
                                         ; change, -1 at value 0: hold). Must be $0200.
 DSP_X_WAVE_DAC      equ     $0400       ; 4096 words: (waveform DAC - wave zero) << 10
 ; Combined-waveform tables (waveform & 7 = 3, 5, 6, 7), 4096 words each. Above
-; P:$1400 so that external P (which aliases external Y) holds only the kernel.
-DSP_Y_WAVE3         equ     $1400
-DSP_Y_WAVE5         equ     $2400
+; P:$1c00 so that external P (which aliases external Y) holds only the kernel.
+DSP_Y_WAVE3         equ     $1c00
+DSP_Y_WAVE5         equ     $2c00
+DSP_Y_BLEP          equ     $007f       ; 129 words (internal Y): the polyBLEP step residual, Q23
+                                        ; (S(i/64) - 1 for i = 0..128, see src/ref/sid_ref.c)
 DSP_X_WAVE6         equ     $1400
 DSP_X_WAVE7         equ     $2400

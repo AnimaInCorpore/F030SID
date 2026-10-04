@@ -1,5 +1,13 @@
 # Architecture (plan)
 
+**This is the original plan, kept for the reasoning behind the split.** What was
+built is described in [`dsp-kernel.md`](dsp-kernel.md) (the DSP kernel, protocol
+v9, the SSI stream, costs), [`player.md`](player.md) and
+[`../tools/player/README.md`](../tools/player/README.md) (the 68030 player) and
+[`../src/ref/README.md`](../src/ref/README.md) (the reference model). Where the
+plan below differs from those (the codec rate is 49.17 kHz, the protocol is far
+beyond v1, there is one bit-exact kernel instead of two tiers), they are right.
+
 This document records the intended design. Items marked **done** exist in the
 scaffold; everything else is a proposal to be validated.
 

@@ -87,8 +87,27 @@ when nothing is routed (the integrators are cleared then, in the reference too,
 so the skip is exact). Measured with `profile_dsp.py` on one call in the first
 frame of the gate vector, so it is a sample, not a worst case.
 
-Not yet on the DSP:
-band-limiting (polyBLEP and the sample-instant phase).
+Milestone 5 made the output band-limited, as the reference's `bl` output specifies
+(`voice_output_bl` in `src/ref/sid_ref.c`, written in the DSP's arithmetic; the gates
+now compare the band-limited voices and the chip output made from them):
+
+- plain triangle, saw and pulse are read at the sample instant: the phase plus
+  `freq * eps`, one MAC with `eps >> 13` (computed once per frame);
+- a saw or pulse edge within two frames of the sample instant gets a 4-point
+  polyBLEP correction on the DAC word: the distance to the edge in frames is a
+  16-bit `DIV` by `D = freq * cycles per frame` (computed on a frequency write),
+  the step residual comes from a 129-word table (internal Y, host-loaded) with
+  linear interpolation, times the DAC step of the pulse;
+- a frame far from any edge pays a countdown: `S_BLCNT` holds the frames that are
+  certainly outside the next edge's window (set by a 13-bit `DIV` when an edge has
+  passed, cleared by anything that moves the phase or the edges: frequency and
+  pulse-width writes, control writes, a hard sync). Only when it runs out does the
+  frame take the long way (`bl_saw`, `bl_pulse`, `bl_corr`, `bl_frames`);
+- `S_WAVEOUT`, the chip's waveform output register, is no longer stored by these
+  handlers (their code is the sample instant's, not the integer cycle's); it is
+  made from the phase when a register write could observe it (`wave_refresh`).
+
+Noise, combined waveforms, ring modulation and the test bit are not band-limited.
 
 ### Source layout
 
@@ -99,8 +118,8 @@ indexed move per variable. So the per-voice code is written once, in
 instantiates it three times with absolute addresses. In a voice section `S_X` is
 this voice's variable, `SRC_X` the voice that syncs and ring-modulates it, `DST_X`
 the voice it syncs, and every label gets a `_0/_1/_2` suffix. The generated
-`build/dsp/SID.ASM` is 4,600 lines; the kernel ends at P:$11f7,
-still under the P:$1400 limit above which external Y begins.
+`build/dsp/SID.ASM` is 5,500 lines; the kernel ends at P:$15fd,
+under the P:$1c00 limit above which the external Y tables begin.
 
 ### Gate
 
@@ -144,7 +163,7 @@ Two details that cost time and are worth knowing:
 The kernel is 700+ words and runs past the 512-word internal P RAM, so it uses
 F030MXDRV's two-stage load: `Dsp_ExecBoot` installs `stage2_loader.asm` (a
 bootstrap that reserves P:$0040-$007f), then the host streams the kernel's
-sparse sections to it (`generate_dsp_stage2.py`, program limit P:$1400). The
+sparse sections to it (`generate_dsp_stage2.py`, program limit P:$1c00). The
 kernel therefore begins at P:$0080. `reset` then enters it with the bus control
 register cleared (zero wait states on external memory).
 
@@ -165,11 +184,13 @@ register cleared (zero wait states on external memory).
 | X internal | $a8-$c7 | register shadow for `READ_REG` |
 | X external | $0200-$03ff | envelope table (host-loaded) |
 | X external | $0400-$13ff | waveform DAC (host-loaded) |
+| Y internal | $7f-$ff | polyBLEP step residual, 129 words (host-loaded) |
 | X external | $1400-$23ff, $2400-$33ff | combined waveform tables 6, 7 (host-loaded) |
-| Y external | $1400-$23ff, $2400-$33ff | combined waveform tables 3, 5 (host-loaded) |
+| X external | $3400-$36ff, $3800-$3bff | the stream's write queue and ring |
+| Y external | $1c00-$2bff, $2c00-$3bff | combined waveform tables 3, 5 (host-loaded) |
 
 External P aliases external Y (docs/dsp56001-notes.md): the kernel stays below
-P:$1400 and the Y tables sit above it. The Hatari gate exercises this aliasing.
+P:$1c00 and the Y tables sit above it. The Hatari gate exercises this aliasing.
 
 ## The SSI stream (protocol v7)
 
@@ -198,14 +219,14 @@ traces this way under the calibrated Hatari, feeding one PAL frame of writes at 
 time from the 200 Hz tick as the player will: clock and checksum must equal the
 reference's, the transmitter must never overtake, and the run must take the
 frames' playing time. Results (`tools/dsp/stream_gate_results.txt`, both models):
-the music, tone and noise traces are identical and in real time (the ring never
-falls below 710 of 768 words on music and tones, 126 on `noise`); the stress
-traces (`filt_3`, `rand_1`, `rand_2`, `sync_ring`) are identical but 2-30% slower
-than real time. The stream adds about 50 cycles per frame to the synthesis numbers
+the music and tone traces are identical and in real time (the ring never falls
+below 627 of 768 words); `noise` is identical and only just in real time (the ring
+runs down to 1 word); the stress traces (`filt_3`, `rand_1`, `rand_2`,
+`sync_ring`) are identical but 5-40% slower than real time. The stream adds about 50 cycles per frame to the synthesis numbers
 below (ring write, checksum, horizon and queue countdowns, two transmit
 interrupts).
 
-## Protocol (v8)
+## Protocol (v9)
 
 `src/dsp/protocol.inc`: every command is a burst of 24-bit host words and gets
 exactly one reply word. `PING`, `WRITE_REG reg,value`, `READ_REG reg`, `RESET`,
@@ -213,7 +234,7 @@ exactly one reply word. `PING`, `WRITE_REG reg,value`, `READ_REG reg`, `RESET`,
 `CONFIG zero,ttl,model,shift_reset_start,hp_cancel,mix_k,filter_gain` (filter gain Q22),
 `FILTER a1,a2,a3,k4,wl,wb,wh,wleak` (the TPT coefficient words and the output gains for the
 current fc and res; pseudo registers 32-39 in the stream),
-`FRAME` (four reply words: the voice 1, 2 and 3 outputs and the chip output, each
+`FRAME` (four reply words: the band-limited voice 1, 2 and 3 outputs and the chip output, each
 a 24-bit two's-complement word). v6: the host loads the envelope table as 512 words at
 `DSP_X_ENV_TAB` (per envelope value: DAC << 13, and the exponential counter period that starts
 there) and the wave DAC as `(DAC - zero) << 10`; `CONFIG` must follow the table loads. The one-reply rule of the earlier versions holds
@@ -221,22 +242,31 @@ for every other command.
 
 ## Next
 
-0. **The synthesis fits the 49.17 kHz frame, bit-exact.** Measured with
-   `tools/dsp/profile_frames.py` (twelve whole frames sampled through a gate run; the budget is
-   326 cycles per frame):
+0. **Cost.** Measured with `tools/dsp/profile_frames.py` (twelve whole frames sampled through
+   a gate run; the budget is 326 cycles per frame at 49.17 kHz):
 
-   | trace | first version | previous | now: mean | max of the samples |
-   | --- | --- | --- | --- | --- |
-   | `music_1` (tracker-style, no filter) | 756 | 515 | 150 | 203 |
-   | `music_2` (the same with a filter sweep) | 805 | 564 | 187 | 240 |
-   | `tone_saw_7509` (AD=0: a rate step every 8 cycles) | 1,102 | 670 | 180 | 217 |
-   | `sync_ring` (hard sync and ring between all voices, AD=0) | | | 277 | 571 |
-   | `rand_1`, `rand_2` (random registers: combined waveforms, sync, test) | 1,070-1,350 | 920-1,130 | 260, 323 | 397, 404 |
+   | trace | first version | before the rebuilt frame | naive voices | band-limited (now): mean | max of the samples |
+   | --- | --- | --- | --- | --- | --- |
+   | `music_1` (tracker-style, no filter) | 756 | 515 | 150 | 220 | 354 |
+   | `music_2` (the same with a filter sweep) | 805 | 564 | 187 | 234 | 396 |
+   | `tone_saw_7509` (AD=0: a rate step every 8 cycles) | 1,102 | 670 | 180 | 205 | 242 |
+   | `tone_pulse_34190` (a 2 kHz pulse: an edge every 12 frames) | | | | 241 | 368 |
+   | `sync_ring` (hard sync and ring between all voices, AD=0) | | | 277 | 344 | 779 |
+   | `rand_2` (random registers: combined waveforms, sync, test) | 1,070-1,350 | 920-1,130 | 323 | 352 | 427 |
 
-   The numbers cover `cmd_frame` to `fr_done`: synthesis only, not the host-port replies, the
-   register writes, the stream's own work (see The SSI stream) or band-limiting. A frame in
-   which a sync source's msb toggles (the oscillators are clocked twice) or several events
-   coincide exceeds 326 cycles; the stream's ring absorbs those.
+   The numbers cover `cmd_frame` to `fr_done`: synthesis only. The stream adds about 50 cycles
+   per frame (ring write, checksum, countdowns, two transmit interrupts), register writes
+   their handlers. Music therefore runs at roughly 270-285 of the 326 cycles, and it does play
+   in real time in the stream and player gates (the ring stays above 550 of 768 words), but the
+   margin is thin: `noise` only just keeps up, and the stress traces (`sync_ring`, `filt_3`,
+   `rand_*`) are 5-40% slower than real time. Single frames exceed the budget (an edge
+   correction costs 80-150 cycles, a sync split more); the ring absorbs those.
+
+   Band-limiting costs about 30 cycles per frame in the straight path (the `eps >> 13` set-up,
+   the sample-instant MAC and the edge countdown per voice) and, averaged, another 20-40 for
+   the frames near an edge. Where to get it back, if needed: the out-of-line correction
+   (`bl_corr`: an 11-bit shift and a 16-bit `DIV` per edge), the stream's checksum (a gate aid,
+   11 cycles), the sync loop.
 
    How the frame is built (`sid.asm.in`, all gated bit for bit, `tools/dsp/gate_results_rt.txt`):
    - phase: one 48-bit word `acc << 12` (X = the 12-bit waveform index, Y = the rest), advanced
@@ -258,10 +288,10 @@ for every other command.
      loop; a cheap test against `S_THR` decides whether the exact toggle search is needed;
    - everything a normal frame executes is in internal P memory with short jumps, loads ride
      on ALU instructions as parallel moves, and the frame's constants come from short memory.
-2. Band-limited output (sample-instant phase, polyBLEP-4) in front of the mixer
-   (the reference's `mix_bl` is the filter fed with it).
 3. Filter: the response is within 1.6 dB rms of reSID's (`src/ref/README.md`); left are the
    6581 between fc 400 and 900, and its distortion.
 4. The player exists (docs/player.md); its 6510 environment is minimal (no CIA/VIC/interrupts).
-5. Margin for the stress cases: hard sync between all voices with the fastest envelope rate,
-   and random combined-waveform traffic, are 2-30% over real time in the stream.
+5. Margin: see Cost above. Music is at about 85% of the frame in the stream; the stress cases
+   are over.
+6. Not band-limited: noise, combined waveforms, ring-modulated triangle, voices under the
+   test bit.

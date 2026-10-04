@@ -66,11 +66,11 @@ F_RT            equ     $0f             ; bit 0: some voice is routed through th
 K_EPSINC        equ     $09             ; EPS_INC
 K_FFF           equ     $0a             ; $fff
 K_7FF           equ     $0b             ; $7ff
+; (X short, in the spare words of the voice blocks: see gen_sid_asm.py)
 G_DT11          equ     $0f             ; sync frames: G_DTMIN << 11
 T_D             equ     $1e             ; mixer temporaries (the spare Y words of the voice blocks)
 T_X             equ     $1f
 T_OUT           equ     $2e             ; the chip output
-G_LATCH         equ     $3e             ; sync frames: bit 0: a voice was restarted in the last step
 G_PRE           equ     $3f             ; sync frames: (cycles left - 1) << 11
 K_HPW           equ     $2f             ; EXT_HP_W
 ; X globals outside the short range
@@ -101,6 +101,12 @@ F_WL            equ     $58             ; the filter outputs' gains / 2 (Q23, ho
 F_WB            equ     $59             ; low-pass, band-pass, high-pass,
 F_WH            equ     $5a
 F_WLEAK         equ     $5b             ; and the low-pass share in the high-pass output
+; band-limiting (bl_corr and its callers)
+G_JUMPW         equ     $5c             ; wave DAC word of code $fff less that of code 0 (set by CONFIG)
+G_BLDAC         equ     $5d             ; the DAC word being corrected
+G_BLPH          equ     $70             ; L: the phase at the sample instant
+BL_CYC16        equ     1313185         ; SID cycles per frame, Q16 (SID_CYC_Q24 >> 8)
+BL_MAXCNT       equ     2047*$fff       ; the edge countdown is kept in units of $fff, at most 2047 frames
 
 ; The stream's memory (external X, above the tables)
 FIFO_BASE       equ     $3400           ; write queue: 256 entries of cycle, register, value
@@ -118,10 +124,10 @@ F_MODE          equ     $c9             ; $18 high nibble: LP BP HP voice-3-off
 F_VOL           equ     $ca
 F_MIXK          equ     $cb             ; mixer scale, Q23 (config)
 ; 48-bit states: L memory, X = integer part, Y = fraction
-F_S1            equ     $e0
-F_S2            equ     $e1
-F_XL            equ     $e2
-F_XH            equ     $e3
+F_S1            equ     $74             ; (below the polyBLEP table, which fills Y $7f-$ff)
+F_S2            equ     $75
+F_XL            equ     $76
+F_XH            equ     $77
 MASK_R          equ     $100000         ; routed voices enter divided by 4 (headroom)
 MASK_D          equ     $400000
 EXT_LP_W        equ     5182881         ; external 15.9 kHz low-pass, g/(1+g), Q23
@@ -154,6 +160,12 @@ frame:
         jcc     <fr_n
         move    l:<K21,y
 fr_n:   move    a1,x:<G_EPS
+        move    a1,x0                           ; eps >> 13 for the sample-instant phase (phase B)
+        move    x:<K_400,x1
+        mpy     x0,x1,b
+        move    y:<K_7FF,x1
+        and     x1,b
+        move    b1,x:<G_EPS13
         move    y,l:<G_N
         move    x:<G_WREM,b                     ; a queued register write falls in this frame's cycles?
         sub     y1,b        #V0_OUT,r0
@@ -173,21 +185,37 @@ fr_n:   move    a1,x:<G_EPS
         move    a,l:<S_ACC
 ;@endvoice
 
-; Phase B: waveform code, (wave DAC - zero) * envelope DAC into S_OUT.
+; Phase B: waveform code, (wave DAC - zero) * envelope DAC into S_OUT. Plain
+; triangle, saw and pulse are read at the sample instant (phase + freq * eps);
+; saw and pulse count the frames down to the next edge window (S_BLCNT, in
+; units of $fff) and fall out of line (bl_saw, bl_pulse) for the polyBLEP
+; correction around an edge. y1 = eps >> 13 throughout.
+fr_b:   move    x:<G_EPS13,y1
 ;@voice
 vb:     move    x:<S_WH,r1
-        move    x:<S_ACC,a                      ; a = ix : 0
+        move    l:<S_ACC,a                      ; a = ix : fraction
         jmp     (r1)
 hpulse:                                         ; code = ix >= pw ? $fff : 0
-        move    x:<S_PW,x0
-        clr     b           y:<K_FFF,y0
+        move    x:<S_FREQE,x0
+        mac     y1,x0,a     y:<K_FFF,x1
+        and     x1,a        x:<S_BLCNT,b        ; the phase at the sample instant, wrapped
+        sub     x1,b        x:<S_PW,x0
+        jlt     <bl_pulse                       ; an edge may be near
+        move    #0,y0
         cmp     x0,a
-        tge     y0,b
-        move    b1,n2
-        move    b1,x:<S_WAVEOUT
+        tge     x1,a
+        tlt     y0,a
+        jmp     <hbl
+hsaw:                                           ; code = ix
+        move    x:<S_FREQE,x0
+        mac     y1,x0,a     y:<K_FFF,x1
+        and     x1,a        x:<S_BLCNT,b
+        sub     x1,b
+        jlt     <bl_saw
+hbl:    move    a1,n2
         move    x:<S_ENVDAC,y0
         move    x:(r2+n2),x0
-        mpy     x0,y0,a
+hblm:   mpy     x0,y0,a     b1,x:<S_BLCNT       ; x0 = DAC word, b1 = the countdown
         move    a1,x:<S_OUT
         jmp     <vbend
 hfloat:                                         ; no waveform: the last code floats until its TTL runs out
@@ -195,21 +223,23 @@ hfloat:                                         ; no waveform: the last code flo
         tst     b
         jne     hf_ttl
 hf_go:  move    x:<S_WAVEOUT,a
-        jmp     <hsaw
+        jmp     <hplain
 hnoise:
         move    y:<S_NOISE,a
-        jmp     <hsaw
+hcode:  move    a1,x:<S_WAVEOUT                 ; (the fast triangle, saw and pulse leave S_WAVEOUT to wave_refresh)
+        jmp     <hplain
 htri:                                           ; ((ix ^ (msb ? $7ff : 0)) & $7ff) << 1
-        move    y:<K_7FF,x0
+        move    x:<S_FREQE,x0
+        mac     y1,x0,a     y:<K_7FF,x1
         jclr    #11,a1,ht_up
-        eor     x0,a
-ht_up:  and     x0,a
+        eor     x1,a
+ht_up:  and     x1,a
+        move    a1,a                            ; (drop the fraction)
         asl     a
-hsaw:                                           ; code = ix
-        move    a1,n2
+hplain: move    a1,n2
         move    x:<S_ENVDAC,y0
         move    x:(r2+n2),x0
-        mpy     x0,y0,a     a1,x:<S_WAVEOUT
+        mpy     x0,y0,a
         move    a1,x:<S_OUT
 vbend:
 ;@endvoice
@@ -676,6 +706,113 @@ rate_lookup:                            ; a1 = nibble -> a = rate counter period
         move    x:(r1+n1),a
         rts
 
+; ---- polyBLEP (src/ref/sid_ref.c blep48). Distances are 48-bit phase words
+; (acc << 12); D = freq * cycles per frame in phase units.
+
+bl_wrap:                                ; the edge at phase 0: a = phase -> the signed distance to its nearer image
+        move    #>$800,x1
+        cmp     x1,a
+        jlt     <bl_corr
+        move    #>$1000,x1
+        sub     x1,a
+
+; a = signed distance to an edge, x0 = D -> a = the correction to the DAC word for an edge of height
+; G_JUMPW (0 beyond two frames; G_BLHIT is set within). Clobbers b, x, y, r1, n1.
+bl_corr:
+        move    #0,y1                   ; y1 bit 0: the sample is before the edge
+        tst     a
+        jpl     <bc_abs
+        neg     a
+        move    #>1,y1
+bc_abs: move    x0,b
+        tst     b
+        jeq     <bc_zero                ; frequency 0
+        move    #>$1000,y0
+        mpy     x0,y0,b                 ; 2 * D << 12: two frames
+        cmp     b,a
+        jge     <bc_zero
+        bset    #0,x:<G_BLHIT
+        rep     #11
+        asl     a
+        and     #$fe,ccr
+        rep     #16
+        div     x0,a                    ; a0 = pos: the distance in 1/64 frame, Q8
+        move    a0,a
+        move    #>$ffff,x1
+        and     x1,a
+        move    a1,x1
+        move    #>$8000,y0
+        mpy     x1,y0,a                 ; a1 = table index, a0 = fraction << 16
+        move    a1,n1
+        move    #>DSP_Y_BLEP,r1
+        clr     b
+        move    a0,b1
+        lsr     b
+        move    b1,y0                   ; fraction << 15
+        lua     (r1)+n1,r1
+        nop
+        move    y:(r1)+,x0
+        move    y:(r1),a
+        sub     x0,a
+        move    a1,x1
+        mpy     x1,y0,a
+        add     x0,a                    ; the step residual, interpolated
+        move    a1,x0
+        move    x:G_JUMPW,y0
+        mpy     x0,y0,a
+        move    a1,a
+        jclr    #0,y1,bc_done
+        neg     a
+bc_done:
+        rts
+bc_zero:
+        clr     a
+        rts
+
+; a = phase distance (48-bit, positive) to the next edge ahead, x0 = D -> b1 = the countdown: frames
+; that are certainly outside that edge's window, times $fff. After K frames the sample instant
+; has moved by at most K * 21 * freq + freq, and 21 * freq <= 1.048 * (D + 1): with the window's
+; two frames and a quarter in hand, K = floor(15/16 * (distance - 2.25 D) / D) is safe for D >= 64.
+bl_frames:
+        move    x0,b
+        move    #>64,x1
+        cmp     x1,b
+        jlt     <bf_zero                ; (near-zero frequencies: every frame takes the long way)
+        move    #>$1200,y0
+        mpy     x0,y0,b                 ; 2.25 * D << 12
+        sub     b,a
+        jle     <bf_zero
+        move    a1,b
+        cmp     x0,b
+        jge     <bf_max                 ; more than 4095 frames
+        and     #$fe,ccr
+        rep     #13
+        div     x0,a                    ; frames = distance / D
+        move    a0,a
+        move    #>$1fff,x1
+        and     x1,a
+        move    a1,x1
+        move    #>$080000,y0
+        mpy     x1,y0,b                 ; / 16
+        sub     b,a
+        move    a1,a
+        tst     a
+        jle     <bf_zero
+        move    #>2047,x1
+        cmp     x1,a
+        tgt     x1,a
+        move    a1,x1
+        move    #>$fff,y0
+        mpy     x1,y0,b
+        asr     b
+        move    b0,b
+        rts
+bf_zero:
+        clr     b
+        rts
+bf_max: move    #>BL_MAXCNT,b
+        rts
+
 ;@voice
 ; ---------------------------------------------------------------- oscillator
 ; The phase is the 48-bit word L:S_ACC = acc << 12: X = ix (acc >> 12, the
@@ -836,28 +973,33 @@ sh_b:   move    b1,y:<S_SR
 
 ; ---- phase B, the general output handlers (reSID's set_waveform_output(delta_t)
 ; through the tables)
-hgen:                                   ; combined waveforms, ring-modulated triangle. a = ix : 0
+hgen:                                   ; combined waveforms, ring-modulated triangle
         move    y:S_WJ,r1
+        move    x:<S_ACC,a
         jclr    #0,x:<S_RING,hg_go      ; ring modulation flips the index msb while the source's msb is clear
         jset    #11,x:<SRC_ACC,hg_go
         bchg    #11,a1
 hg_go:  jsr     (r1)                    ; the table for waveform & 7
         jclr    #2,x:<S_WAVEFORM,hg_np
+        jset    #1,x:<S_MSB,hg_lat      ; (a hard sync in the frame's last step latched the pulse level)
         move    x:<S_ACC,b              ; the pulse bit: zero below the pulse width
         move    x:<S_PW,x0
         cmp     x0,b
         jge     <hg_np
         clr     a
+        jmp     <hg_np
+hg_lat: move    y:S_PULSE,x0
+        and     x0,a
 hg_np:  jclr    #3,x:<S_WAVEFORM,hg_nn
         move    y:<S_NOISE,x0
         and     x0,a
 hg_nn:  move    y:S_WF,b
         tst     b
-        jeq     <hsaw                   ; a1 = the code
+        jeq     <hcode                  ; a1 = the code
         move    a1,x:<S_WAVEOUT         ; 6581 saw combination or noise combination
         jsr     wave_post
         move    x:<S_WAVEOUT,a
-        jmp     <hsaw
+        jmp     <hplain
 htest:                                  ; the test bit: the phase is held, the pulse high
         jsr     test_clock
         move    x:<S_WAVEFORM,a
@@ -870,6 +1012,91 @@ htest:                                  ; the test bit: the phase is held, the p
         bchg    #11,a1
 ht_go:  jsr     (r1)
         jmp     <hg_np
+
+; ---- band-limiting, the out-of-line side: the countdown ran out, an edge may be
+; within two frames. a = the phase at the sample instant, x1 = $fff.
+bl_saw:
+        move    a1,n2
+        move    a,l:G_BLPH
+        move    x:(r2+n2),x0            ; the DAC word of the code
+        move    x0,x:G_BLDAC
+        clr     b
+        move    b1,x:<G_BLHIT
+        move    y:S_BLD,x0
+        jsr     bl_wrap                 ; the falling edge at the wrap
+        move    x:G_BLDAC,b
+        sub     a,b
+        move    b1,x:G_BLDAC
+        clr     b
+        jset    #0,x:<G_BLHIT,bl_done    ; inside the window: come back next frame
+        move    #>$1000,a               ; frames to the next wrap's window
+        move    l:G_BLPH,b
+        sub     b,a
+        move    y:S_BLD,x0
+        jsr     bl_frames
+bl_done:
+        move    x:G_BLDAC,x0
+        move    x:<G_EPS13,y1
+        move    x:<S_ENVDAC,y0
+        jmp     <hblm
+
+bl_pulse:                               ; (x0 = pw)
+        move    a,l:G_BLPH
+        move    #0,n2
+        cmp     x0,a
+        jlt     blp_c
+        move    x1,n2
+blp_c:  clr     b
+        move    b1,x:<G_BLHIT
+        move    x:(r2+n2),x0
+        move    x0,x:G_BLDAC
+        move    x:<S_PW,a               ; pulse width 0: always high, no edges
+        tst     a
+        jne     blp_e
+        move    #>BL_MAXCNT,b
+        jmp     bl_done
+blp_e:  move    l:G_BLPH,a              ; the rising edge at the pulse width: the nearer image
+        move    x:<S_PW,x0
+        sub     x0,a
+        move    #>$800,x0
+        cmp     x0,a
+        jlt     blp_lo
+        move    #>$1000,x0
+        sub     x0,a
+        jmp     blp_r
+blp_lo: move    #>-$800,x0
+        cmp     x0,a
+        jge     blp_r
+        move    #>$1000,x0
+        add     x0,a
+blp_r:  move    y:S_BLD,x0
+        jsr     bl_corr
+        move    x:G_BLDAC,b
+        add     a,b
+        move    b1,x:G_BLDAC
+        move    l:G_BLPH,a              ; the falling edge at the wrap
+        move    y:S_BLD,x0
+        jsr     bl_wrap
+        move    x:G_BLDAC,b
+        sub     a,b
+        move    b1,x:G_BLDAC
+        clr     b
+        jset    #0,x:<G_BLHIT,bl_done
+        move    l:G_BLPH,b              ; frames to the nearer of the two windows ahead
+        move    x:<S_PW,a
+        sub     b,a                     ; to the pulse width
+        jgt     blp_g
+        move    #>$1000,x0
+        add     x0,a
+blp_g:  move    #>$1000,x0
+        tfr     x0,b
+        move    l:G_BLPH,x
+        sub     x,b                     ; to the wrap
+        cmp     b,a
+        tgt     b,a
+        move    y:S_BLD,x0
+        jsr     bl_frames
+        jmp     bl_done
 
 ; the table routines: a1 = ix -> a1 = the waveform code before the pulse and noise masks
 wt_t7:  move    a1,n1
@@ -1128,7 +1355,13 @@ cmd_config:                             ; wave zero, floating TTL, model, shift 
         jclr    #0,x:m_hsr,*
         movep   x:m_hrx,x0
         move    x0,x:<F_FG
-        jsr     env_refresh_0           ; the tables are loaded by now: the envelope DAC words
+        move    #>DSP_X_WAVE_DAC,r1     ; the tables are loaded by now: the pulse's DAC step,
+        move    #>$fff,n1
+        move    x:(r1),x0
+        move    x:(r1+n1),a
+        sub     x0,a
+        move    a1,x:G_JUMPW
+        jsr     env_refresh_0           ; and the envelope DAC words
         jsr     env_refresh_1
         jsr     env_refresh_2
         jmp     reply_ok
@@ -1321,8 +1554,6 @@ um_routed:
 ; at every msb toggle of a sync source (reSID SID::clock(delta_t)), so that a
 ; restart lands on its cycle. Most frames have no toggle and are one step.
 fr_sync:
-        clr     a
-        move    a1,y:<G_LATCH
 ;@voice
         move    x:<S_REM,b
         sub     y1,b
@@ -1377,17 +1608,7 @@ sy_done:
         move    x:G_DTMIN,x0
         sub     x0,a
         jne     fr_osc_loop
-        jclr    #0,y:<G_LATCH,vb_0
-;@voice
-        jset    #3,x:<S_TEST,sb_test    ; a voice was restarted at the frame's very end: its pulse output is
-        jset    #1,x:<S_MSB,sb_go       ; the one from before the restart, so the outputs take the general path
-        jsr     calc_pulse_out
-        jmp     sb_go
-sb_test:
-        jsr     test_clock
-sb_go:  jsr     gen_out
-;@endvoice
-        jmp     mix_frame
+        jmp     fr_b
 
 ; ------------------------------------------------------------------- helpers
 
@@ -1409,8 +1630,8 @@ reset_state:                            ; the model's power-on state
         rep     #32
         move    a,x:(r0)+
         move    #$09,r0
-        rep     #$77
-        move    a,y:(r0)+               ; Y $09-$7f: constants, the voices' Y variables
+        rep     #$76
+        move    a,y:(r0)+               ; Y $09-$7e: constants, the voices' Y variables (the polyBLEP table follows)
         move    #>F_FILT,r0
         rep     #$21
         move    a,x:(r0)+               ; filter variables and states ($c8-$e8)
@@ -1431,6 +1652,8 @@ reset_state:                            ; the model's power-on state
         move    x0,y:<K_FFF
         move    #>$7ff,x0
         move    x0,y:<K_7FF
+        move    #>$400,x0
+        move    x0,x:<K_400
         move    #>EXT_HP_W,x0
         move    x0,y:<K_HPW
         move    #>EXT_LP_W,x0
@@ -1481,14 +1704,14 @@ write_reg:
         jmp     wr_done
 
 wr_freq_lo:
-        move    x:<S_FREQ,a
+        move    y:S_FREQ,a
         move    #>$ff00,x0
         and     x0,a
         move    y1,x0
         or      x0,a
         jmp     wr_freq_set
 wr_freq_hi:
-        move    x:<S_FREQ,a
+        move    y:S_FREQ,a
         move    #>$ff,x0
         and     x0,a
         move    y1,b
@@ -1497,22 +1720,34 @@ wr_freq_hi:
         move    b1,x0
         or      x0,a
 wr_freq_set:
-        move    a1,x:<S_FREQ
+        move    a1,y:S_FREQ
+        move    a1,x0                   ; D = freq * cycles per frame, for the band-limiting
+        move    #>BL_CYC16,y0
+        mpy     x0,y0,b
+        rep     #7
+        asl     b
+        move    b1,y:S_BLD
+        clr     b
+        move    b1,x:<S_BLCNT
         jset    #3,x:<S_TEST,wr_done   ; the test bit holds the oscillator
         move    a1,x:<S_FREQE
         jmp     wr_done
 
 wr_pw_lo:
+        jsr     wave_refresh
         move    x:<S_PW,a
         move    #>$f00,x0
         and     x0,a
         move    y1,x0
         or      x0,a
         move    a1,x:<S_PW
+        clr     b
+        move    b1,x:<S_BLCNT
         jsr     calc_pulse_out
         jmp     wr_done
 
 wr_pw_hi:
+        jsr     wave_refresh
         move    x:<S_PW,a
         move    #>$ff,x0
         and     x0,a
@@ -1524,6 +1759,8 @@ wr_pw_hi:
         move    b1,x0
         or      x0,a
         move    a1,x:<S_PW
+        clr     b
+        move    b1,x:<S_BLCNT
         jsr     calc_pulse_out
         jmp     wr_done
 
@@ -1585,6 +1822,9 @@ wc_nfresh:
         jset    #1,x:<S_MSB,wc_pfresh           ; or latched by a hard sync
         jsr     calc_pulse_out
 wc_pfresh:
+        jsr     wave_refresh                    ; (and the fast handlers leave S_WAVEOUT to this)
+        clr     a
+        move    a1,x:<S_BLCNT
         move    x:<S_WAVEFORM,a
         move    a1,y:S_TMPA             ; waveform_prev
         move    x:<S_TEST,a
@@ -1622,11 +1862,11 @@ wc_ring_done:
         move    x:G_SRSTART,x0
         move    x0,y:S_SRRESET
         move    #>$fff,x0
-        move    x0,x:<S_PULSE
+        move    x0,y:S_PULSE
         jmp     wc_after_test
 wc_test_was_on:
         jset    #3,x:<S_TEST,wc_after_test      ; test stays on
-        move    x:<S_FREQ,x0            ; test falling: the oscillator runs again
+        move    y:S_FREQ,x0            ; test falling: the oscillator runs again
         move    x0,x:<S_FREQE
         jsr     pre_writeback_check     ; maybe write the waveform into the register
         tst     a
@@ -1704,7 +1944,7 @@ reset_voice:                            ; the voice's power-on state (its variab
         move    #>$580,x0
         move    x0,x:<S_THR
         move    #>$fff,x0
-        move    x0,x:<S_PULSE
+        move    x0,y:S_PULSE
         move    #>8,x0                  ; release rate 0, counter 0
         move    x0,y:<S_RATEPER
         move    x0,y:<S_CREF
@@ -1823,6 +2063,30 @@ sh_store:
         move    x0,x:<S_WH
         rts
 
+; S_WAVEOUT is waveform_output as of the last frame. The frame's triangle, saw and
+; pulse handlers do not store it (their code is the sample instant's): it is made
+; here, before a write that could change what it would be.
+wave_refresh:
+        jset    #3,x:<S_TEST,wrf_done
+        move    x:<S_WAVEFORM,a
+        move    #>2,x0
+        cmp     x0,a
+        jeq     wrf_do
+        move    #>4,x0
+        cmp     x0,a
+        jeq     wrf_do
+        move    #>1,x0
+        cmp     x0,a
+        jne     wrf_done
+        jset    #0,x:<S_RING,wrf_done
+wrf_do: jset    #1,x:<S_MSB,wrf_core    ; (a latched pulse level stays)
+        jsr     calc_pulse_out
+wrf_core:
+        jsr     wave_core
+        move    a1,x:<S_WAVEOUT
+wrf_done:
+        rts
+
 ; pulse_output = ((acc >> 12) >= pw) ? $fff : 0
 calc_pulse_out:
         clr     b
@@ -1830,7 +2094,7 @@ calc_pulse_out:
         move    x:<S_PW,x0
         cmp     x0,a        y:<K_FFF,y0
         tge     y0,b
-        move    b1,x:<S_PULSE
+        move    b1,y:S_PULSE
         rts
 
 ; Noise combined with another waveform writes the waveform back into the
@@ -1944,7 +2208,7 @@ wave_core:
 wcore_go:
         jsr     (r1)
         jclr    #2,x:<S_WAVEFORM,wcore_nopulse
-        move    x:<S_PULSE,x0
+        move    y:S_PULSE,x0
         and     x0,a
 wcore_nopulse:
         jclr    #3,x:<S_WAVEFORM,wcore_nonoise
@@ -2080,15 +2344,16 @@ sync_reset:
         move    x:<DST_PW,x0
         cmp     x0,a        y:<K_FFF,y0
         tge     y0,b
-        move    b1,x:<DST_PULSE
+        move    b1,y:DST_PULSE
         bset    #1,x:<DST_MSB
-        bset    #0,y:<G_LATCH
         clr     a
         move    a,l:<DST_ACC
         move    a1,x:<DST_THR
+        move    a1,x:<DST_BLCNT
         rts
 sr_clr: clr     a
         move    a,l:<DST_ACC
+        move    a1,x:<DST_BLCNT
         jset    #0,x:<DST_MSB,sr_done   ; (its S_THR is 0 then, and stays)
         move    #>$80,x0
         move    x0,x:<DST_THR
@@ -2109,7 +2374,7 @@ hf_keep:
 ; test bit set: the register reset countdown runs, the pulse is high
 test_clock:
         move    #>$fff,x0
-        move    x0,x:<S_PULSE
+        move    x0,y:S_PULSE
         move    y:S_SRRESET,a
         tst     a
         jeq     tc_done
@@ -2123,33 +2388,6 @@ test_clock:
 tc_keep:
         move    a1,y:S_SRRESET
 tc_done:
-        rts
-
-; the voice's output with S_PULSE as it stands (any waveform)
-gen_out:
-        move    x:<S_WAVEFORM,a
-        tst     a
-        jeq     go_float
-        jsr     wave_core
-        move    a1,x:<S_WAVEOUT
-        jsr     wave_post
-        jmp     go_out
-go_float:                               ; no waveform: the output floats until its TTL runs out
-        move    y:S_TTL,a
-        tst     a
-        jeq     go_out
-        move    x:<G_N,x0
-        sub     x0,a
-        jgt     go_fkeep
-        clr     a
-        move    a1,x:<S_WAVEOUT
-go_fkeep:
-        move    a1,y:S_TTL
-go_out: move    x:<S_WAVEOUT,n2
-        move    x:<S_ENVDAC,y0
-        move    x:(r2+n2),x0
-        mpy     x0,y0,a
-        move    a1,x:<S_OUT
         rts
 
 ;@endvoice

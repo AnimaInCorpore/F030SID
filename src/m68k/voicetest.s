@@ -97,6 +97,7 @@ run_vector:
         LOADX   DSP_X_SUST_TAB,16,tab_sust
         LOADX   DSP_X_ENV_TAB,512,tab_env
         LOADX   DSP_X_WAVE_DAC,4096,tab_wavedac
+        LOADY   DSP_Y_BLEP,129,tab_blep
         LOADY   DSP_Y_WAVE3,4096,tab_wave3
         LOADY   DSP_Y_WAVE5,4096,tab_wave5
         LOADX   DSP_X_WAVE6,4096,tab_wave6

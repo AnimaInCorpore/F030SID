@@ -257,11 +257,11 @@ $(RELEASE_DIR)/sid.lod: $(DSP_BUILD)/.assembled
 	cp $(DSP_BUILD)/SID.LOD $@
 
 # 512-word bootstrap plus the sparse program (internal P, then external P up to
-# P:$1400, where external Y tables begin to alias); see docs/dsp-kernel.md.
+# P:$1c00, where external Y tables begin to alias); see docs/dsp-kernel.md.
 $(DSP_STAGE2_IMAGE): tools/generate_dsp_stage2.py $(DSP_BUILD)/.assembled
 	@mkdir -p $(GENERATED_BUILD)
 	python3 tools/generate_dsp_stage2.py --bootstrap $(DSP_BUILD)/SIBOOT.LOD \
-		--program $(DSP_BUILD)/SID.LOD --program-limit 0x1400 > $@
+		--program $(DSP_BUILD)/SID.LOD --program-limit 0x1c00 > $@
 
 $(RATETEST_BOOT_IMAGE): tools/generate_dsp_stage2.py $(DSP_BUILD)/.assembled
 	@mkdir -p $(GENERATED_BUILD)

@@ -69,8 +69,9 @@ Findings from building the gate, relevant to the DSP design:
 
 ## Filter, mixer and external filter
 
-`sid_ref_write` takes registers 21..24 for `$15..$18`. `sid_frame_t.mix` is the
-chip output (16-bit scale) per codec frame, fed with the band-limited voices:
+`sid_ref_write` takes registers 21..24 for `$15..$18`. `sid_frame_t.mix_bl` is the
+chip output (16-bit scale) per codec frame, fed with the band-limited voices (what
+the DSP renders; `mix` is the same fed with the naive voices):
 
 - routing (`$17` low nibble), voice 3 off, mode bits LP/BP/HP, volume `$18`;
 - a TPT state-variable filter (Zavalishin) with 48-bit states: `g = tan(pi f0 / fs)`
@@ -140,8 +141,8 @@ is not enough, the DSP's 56-bit accumulator or the host takes over:
 | Quantity | Width | On the DSP |
 | --- | --- | --- |
 | `freq * eps` (phase extrapolation) | 40 bits | one MPY, accumulator |
-| polyBLEP position `delta * recip` | 58 bits | MPY by a host-supplied reciprocal kept as mantissa plus shift |
-| `recip` = 2^62 / (freq * cycles per frame) | 34 bits | computed by the 68030 on a frequency write |
+| polyBLEP position `d * 4 / D` (distance to the edge over the phase step per frame) | 48 / 24 bits | a 16-bit `DIV`, only in frames near an edge |
+| `D` = freq * cycles per frame | 21 bits | one MPY on a frequency write |
 | polyBLEP correction `jump * t` and the final `wave * env` | 33-37 bits | MPY/MAC into the accumulator, one rounding to 24 |
 | cycles per frame, Q24 | 29 bits | only its fraction (24 bits) is added per frame; the integer part is a constant 20 |
 | DAC and combined-wave tables | 12 bit data | host-generated; combined tables are reSID's data files |

@@ -49,5 +49,5 @@ the DSP kernel's stream. Everything here is its specification and its gates.
    models) equal the C routine's.
 4. `play-gate`: `F030SID.TTP` plays each tune for some seconds under the
    DSP-calibrated Hatari; the DSP's checksum over every rendered frame equals
-   the chip reference's rendering of the reference trace, the transmitter never
+   the chip reference's (band-limited) rendering of the reference trace, the transmitter never
    overtakes the renderer, and the run takes the tune's playing time.

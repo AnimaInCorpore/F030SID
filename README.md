@@ -11,22 +11,32 @@ verification idea. See [`docs/architecture.md`](docs/architecture.md).
 
 ## Project status
 
-Scaffold only. What exists today:
+`release/f030sid.ttp` plays PSID files: `F030SID.TTP tune.sid [song] [-m 6581|8580]
+[-t seconds]`. Everything has been built and tested under the DSP-calibrated
+Hatari only; nothing has run on a physical Falcon, and no real tune has been
+played yet, only synthetic test tunes.
 
-- the build system (vasm/vlink for the 68030, Motorola `asm56000` under DOSBox
-  for the DSP56001, embedded boot images via `tools/generate_dsp_stage2.py`);
-- `src/m68k/main.s`, a bring-up program that boots the DSP, pings it and
-  round-trips a value through the SID register shadow;
-- `src/dsp/sid.asm`, a DSP kernel that owns the 32-register SID file and
-  answers the host protocol (no synthesis yet);
-- the two physical-Falcon validation programs inherited unchanged from
-  F030MXDRV, `ratetest.tos` (SSI rate) and `dspprobe.tos` (DSP bus probe),
-  which are independent of the sound chip being emulated.
+What exists:
 
-The scaffold builds and runs: `make check smoke ratetest-hatari
-dspprobe-hatari profile-sid` passes on a Windows host with MSYS2, using the
-DSP-calibrated Hatari. Everything runs under Hatari only; nothing has been run
-on a physical Falcon.
+- **The SID on the DSP** (`src/dsp/sid.asm.in`, [`docs/dsp-kernel.md`](docs/dsp-kernel.md)):
+  three voices with every waveform, hard sync, ring modulation, the test bit and
+  the ADSR state machine, bit-exact against reSID's frame clocking; band-limited
+  triangle, saw and pulse (sample-instant phase, polyBLEP); the mixer, a
+  state-variable filter fitted to reSID's response (about 1.6 dB rms), the
+  external filter; a 49.17 kHz SSI stream with a render-ahead ring and
+  cycle-stamped register writes. The DSP is gated bit for bit against a C
+  reference model (`src/ref/`, [`src/ref/README.md`](src/ref/README.md)).
+- **The player on the 68030** (`src/m68k/player.s`, [`docs/player.md`](docs/player.md),
+  [`tools/player/README.md`](tools/player/README.md)): PSID loader, a 6510 core,
+  the filter coefficient derivation, the feed to the DSP stream. Gated end to
+  end: the DSP's rendered frames equal the reference models', in real time.
+
+What it does not do yet: the 6510 has no ROMs, CIA, VIC or interrupts (PSID
+tunes with a play routine at a fixed rate only; no RSID, no interrupt-driven
+sample playback); no OSC3/ENV3 readback, second SID or NTSC timing; the 6581's
+filter distortion is not modelled; noise and combined waveforms are not
+band-limited; the stress traces (hard sync between all voices, random
+combined-waveform traffic) exceed real time.
 
 ## Build
 
@@ -66,28 +76,38 @@ with `/ucrt64/bin` on `PATH`; from a plain Git-bash some tools fail.
 | `make ratetest-hatari` | SSI rate test under Hatari (prescales 3, 1, 2) | Hatari |
 | `make dspprobe-hatari` | DSP bus probe under Hatari | Hatari |
 | `make run` | run `f030sid.tos` in a Hatari window | Hatari |
-| `make ref-gate`, `make trace-test` | reference model and trace tool gates | see below |
+| `make ref-gate`, `make filter-gate` | the reference model against reSID (voices exactly, the filter by spectrum) | host C/C++, numpy, scipy |
+| `make dsp-gate` | the DSP kernel against the reference, frame by frame, bit for bit | Hatari |
+| `make stream-gate` | the same through the SSI stream: bit-exact and in real time | Hatari |
+| `make cpu-gate`, `make cpu-ref-check` | the 68030 6510 core against the C reference core; that core against libsidplayfp | Hatari; `make trace` |
+| `make coef-gate` | the 68030 filter coefficient routine against the C one | Hatari |
+| `make play-gate` | the player end to end: PSID in, the DSP's frames out | Hatari |
+| `make trace`, `make trace-test` | `sidtrace` (PSID to register trace via libsidplayfp) | network, host C++ |
+
+The gate scripts take `--jobs N` (through `DSP_GATE_ARGS`, `STREAM_GATE_ARGS`,
+`CPU_GATE_ARGS`, `PLAY_GATE_ARGS`) to run several Hatari instances at once.
 
 Outputs land in `release/`: `f030sid.tos`, `f030sid.ttp`, `sid.lod`,
 `ratetest.tos`, `dspprobe.tos`.
 
 ## Repository map
 
-- `src/m68k/main.s`: Falcon bootstrap and bring-up harness.
-- `src/m68k/xbios.i`, `verbose.i`: GEMDOS/XBIOS macros and hardware bring-up tracing.
-- `src/m68k/protocol.i` / `src/dsp/protocol.inc`: host/DSP protocol (keep in step).
-- `src/dsp/sid.asm`: DSP SID kernel (register file today; voices, envelopes, filter next).
-- `src/dsp/stage2_loader.asm`: sparse embedded P-memory loader for when the kernel outgrows 512 words.
-- `src/m68k/ratetest.s`, `dspprobe.s` and their DSP counterparts: hardware validation.
-- `tools/`: DSP image generator, Hatari resolution, DSP build script.
-- `docs/`: architecture, SID register reference, DSP and Hatari timing notes,
-  and [hints from the ScummVM DSP AdLib emulator](docs/scummvm-opl-hints.md).
-- `src/ref/`: the 24-bit integer reference model of the SID voices, gated
-  bit-for-bit against reSID (`make ref-gate`); see `src/ref/README.md`.
-- `tools/ref/`: reSID oracle, trace generator and gate scripts.
-- `tools/trace/`: `sidtrace`, which turns a PSID into a cycle-stamped register
-  trace through libsidplayfp (`make trace`); `tests/psid/` has two test tunes.
-- `tools/feasibility/`: aliasing, noise, filter and precision studies behind
-  [`docs/sid-feasibility.md`](docs/sid-feasibility.md).
-- `tests/traces/`: future register-write fixtures for oracle comparison.
-- `third_party/`: pinned references (`f030dsp3d` for the toolchain, `resid` as the SID oracle).
+- `src/dsp/sid.asm.in`: the DSP SID kernel (a template; `tools/dsp/gen_sid_asm.py`
+  instantiates the per-voice code). `src/dsp/protocol.inc` / `src/m68k/protocol.i`:
+  the host/DSP protocol (keep in step). `src/dsp/stage2_loader.asm`: the loader
+  for a kernel larger than the 512 words `Dsp_ExecBoot` installs.
+- `src/m68k/player.s`: the player (`f030sid.ttp`), with `cpu6502.s` (6510 core),
+  `psid.s` (loader and call schedule) and `filtcoef.s` (filter coefficients).
+- `src/m68k/main.s`: the bring-up program (`f030sid.tos`, `make smoke`);
+  `voicetest.s`, `streamtest.s`, `cputest.s`, `coeftest.s`: the gates' harnesses;
+  `ratetest.s`, `dspprobe.s` (+ `src/dsp/*.asm`): hardware validation programs.
+- `src/ref/`: the reference model of the chip (C), the DSP's specification.
+- `tools/ref/`: reSID oracle, measurement and gates of the reference;
+  `tools/dsp/`: the DSP gates and profilers; `tools/player/`: the 6510 reference
+  core, exercisers and the player's gates; `tools/trace/`: `sidtrace`.
+- `tests/traces/`: register traces the gates replay; `tests/psid/`: test tunes.
+- `docs/`: [`dsp-kernel.md`](docs/dsp-kernel.md) (the kernel, the stream, costs),
+  [`player.md`](docs/player.md), [`hatari-timing.md`](docs/hatari-timing.md)
+  (why the calibrated Hatari), [`dsp56001-notes.md`](docs/dsp56001-notes.md),
+  [`sid-feasibility.md`](docs/sid-feasibility.md); [`architecture.md`](docs/architecture.md)
+  is the original plan.

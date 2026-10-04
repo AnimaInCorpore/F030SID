@@ -7,8 +7,9 @@
  * (rate periods, sustain levels, envelope and wave DAC in the kernel's scaling), the chip constants,
  * the frame count, and the register writes tagged with the frame they are
  * applied before (the same rule as ref_run: a write belongs to the frame whose
- * cycle range contains it). expected.txt has the reference model's voice 0
- * three voice `naive` outputs and the chip output (`mix`), four integers per frame.
+ * cycle range contains it). expected.txt has the reference model's three
+ * band-limited voice outputs (`bl`) and the chip output made from them
+ * (`mix_bl`), four integers per frame: what the DSP kernel renders.
  */
 #include "sid_ref.h"
 
@@ -133,6 +134,8 @@ int main(int argc, char **argv)
     for (i = 0; i < 4096; i++)
         tmp[i] = (unsigned)(((int)sid_tab_wave_dac(model)[i] - (int)sid_wave_zero(model)) * 1024) & 0xffffff;
     table(vec, "tab_wavedac", tmp, 4096);
+    for (i = 0; i < 129; i++) tmp[i] = (unsigned)sid_tab_blep()[i] & 0xffffff;
+    table(vec, "tab_blep", tmp, 129);
     {
         static const int combined[4] = { 3, 5, 6, 7 };
         char label[16];
@@ -164,8 +167,8 @@ int main(int argc, char **argv)
             }
             sid_ref_frame(&s, &fr);
             c += fr.n;
-            fprintf(expf, "%d %d %d %d\n", fr.naive[0], fr.naive[1], fr.naive[2], fr.mix);
-            checksum = 3 * checksum + (uint32_t)(fr.mix + fr.naive[0] + fr.naive[1] + fr.naive[2]);
+            fprintf(expf, "%d %d %d %d\n", fr.bl[0], fr.bl[1], fr.bl[2], fr.mix_bl);
+            checksum = 3 * checksum + (uint32_t)(fr.mix_bl + fr.bl[0] + fr.bl[1] + fr.bl[2]);
             nframes++;
         }
         /* The same run as a stream (src/m68k/streamtest.s): the writes stamped with

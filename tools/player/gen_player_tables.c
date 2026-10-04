@@ -89,6 +89,8 @@ int main(int argc, char **argv)
         for (i = 0; i < 2048; i++) put((uint32_t)filter_wh_q22[m][i]);
         mark("SIDTAB_WLEAK");
         for (i = 0; i < 2048; i++) put((uint32_t)filter_wleak_q22[m][i]);
+        mark("SIDTAB_BLEP");                    /* 129: polyBLEP step residual, Q23 */
+        for (i = 0; i < 129; i++) put((uint32_t)sid_tab_blep()[i] & 0xffffff);
         mark("SIDTAB_SIZE");
         fclose(out);
         fclose(inc);
