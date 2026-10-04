@@ -153,12 +153,13 @@ seconds each:
     Ocean Loader 2, Cybernoid II,
     Last Ninja 2, DEMO.SID
 
-  Too slow, by 1 to 25 percent
-    Commando, Turrican, Monty on the
-    Run, Edge of Disgrace, Wizball
+  Nearly, a few short stutters
+    Turrican
 
-  Far too slow, by 45 to 65 percent
-    Ghouls 'n Ghosts, RoboCop 3
+  Too slow, by 3 to 20 percent
+    Commando, Ghouls 'n Ghosts,
+    Monty on the Run, Edge of
+    Disgrace, Wizball, RoboCop 3
 
   Not playable, RSID with samples
     Great Giana Sisters, Tetris

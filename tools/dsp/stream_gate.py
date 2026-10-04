@@ -13,7 +13,7 @@ ahead, the DSP renders ahead into its ring. The run passes when
     gate (voice_dsp_gate.py);
   - the transmitter never overtook the renderer and the SSI never underran;
     the run took the frames' playing time (so the renderer was paced by the
-    transmitter, not free-running); the least ring fill seen is reported (the ring's target is 768 words, 384
+    transmitter, not free-running); the least ring fill seen is reported (the ring's target is 1536 words, 768
     frames: the margin left at the worst moment).
 
 Real-time results need the DSP-calibrated Hatari (docs/hatari-timing.md).
@@ -76,7 +76,7 @@ def one(args, name, model):
     got = struct.unpack(">8I", open(out, "rb").read())
     g_cycles, g_sum, minfill, over_fed, tue, over_end, pushes, ticks = got
     play = frames * 512 / 25175000          # seconds the frames take at the codec rate
-    info = f"{frames} frames in {ticks / 200:.2f} s (playing time {play:.2f} s), least ring fill {minfill} of 768 words"
+    info = f"{frames} frames in {ticks / 200:.2f} s (playing time {play:.2f} s), least ring fill {minfill} of 1536 words"
     if g_cycles != cycles:
         return f"{g_cycles} cycles rendered, expected {cycles}", info
     if g_sum != checksum:

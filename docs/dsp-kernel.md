@@ -195,9 +195,10 @@ P:$1c00 and the Y tables sit above it. The Hatari gate exercises this aliasing.
 ## The SSI stream (protocol v7)
 
 `DSP_CMD_STREAM_START` turns the transmitter on. Its interrupt (a two-word fast
-interrupt at P:$0010, `r3/m3`) plays a ring of 512 stereo frames in external X;
+interrupt at P:$0010, `r3/m3`) plays a ring of 1024 stereo frames in external X;
 the command loop renders ahead of it whenever the host is silent (`stream_step`),
-in runs, until 768 words (384 frames, 7.8 ms) wait. Register writes arrive with
+in runs, until 1536 words (768 frames, 15.6 ms) wait (half of that until protocol v10; the
+larger ring carries a tune over its busy stretches: Cybernoid II needed it). Register writes arrive with
 `DSP_CMD_STREAM_PUSH count, count * (cycle, register, value), horizon`:
 
 - each write is stamped with its SID cycle (mod 2^24) and goes into a 256-entry
@@ -229,7 +230,10 @@ not see before `ss_break` checked; it is a stress trace now); the stress traces
 below (ring write, checksum, horizon and queue countdowns, two transmit
 interrupts).
 
-## Protocol (v9)
+## Protocol (v10)
+
+v10: `STREAM_PLAIN` after `STREAM_START` renders without the checksum (ten cycles a frame that
+only the gates read; the player sends it unless it runs with `-v`, and `-v -p` times that mode).
 
 `src/dsp/protocol.inc`: every command is a burst of 24-bit host words and gets
 exactly one reply word. `PING`, `WRITE_REG reg,value`, `READ_REG reg`, `RESET`,
@@ -286,6 +290,17 @@ for every other command.
    | oscillator events and noise (`oscs`, `os_*`, `og_*`, `shift`, `sh_*`) | 17 | 45 |
    | `cmd_stream_push` (Wizball writes the cutoff every frame: nine entries each) | 19 | 2 |
    | envelopes (`eh_hold`, `envs`) | 16 | 3 |
+
+   Since then (all bit-identical): a resting envelope takes 240 rate steps at once (`eh_hold`,
+   `env_unpark`; it had cost RoboCop 3 142 cycles per frame and Ghouls 'n Ghosts 77: a voice at
+   a low sustain level with decay rate 0 stepped 2.5 times a frame), the player's stream leaves
+   the checksum out (10 cycles), and the ring is twice as long. A second profile, 300,000
+   frames from frame 300,000 with the checksum: Commando 347, RoboCop 3 333, Ghouls 'n Ghosts
+   359, Wizball 378, Edge of Disgrace 379, Monty on the Run 403. What is left per tune: the
+   edge correction (Monty 100, Wizball 55, RoboCop 50, Commando 40), hard sync (Edge of
+   Disgrace 80: `sck_no`, `fr_sync`, `sy_done`), noise and combined waveforms (Ghouls 70:
+   `oscs`, `og_loop`, `shift`, `sh_*`), the coefficient transport (Wizball 20); and for all of
+   them the fixed part: phase A 46, the stream loop 38, the mixer 41 (79 with the filter).
 
    So the edge correction is the first thing to make cheaper (`bc_abs` alone is 58 cycles per
    frame in Monty: an 11-bit `rep asl` and a 16-step `DIV` per edge, for high pulse voices with

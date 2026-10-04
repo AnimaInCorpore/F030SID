@@ -1,6 +1,6 @@
 ; F030SID: the SID player
 ;
-;   F030SID.TTP tune.sid [song] [-m 6581|8580] [-t seconds] [-v]
+;   F030SID.TTP tune.sid [song] [-m 6581|8580] [-t seconds] [-v] [-p]
 ;
 ; Plays a PSID file: the 68030 runs the tune's 6510 code (cpu6502.s, psid.s),
 ; stamps every SID register write with its cycle and sends the writes to the
@@ -8,7 +8,8 @@
 ; the DSP renders the chip and plays it through the SSI at 49.17 kHz
 ; (docs/dsp-kernel.md, docs/player.md). With no command tail the line is read
 ; from AUTOPLAY.INF beside the program. A key stops; -t stops after that many
-; seconds of tune time; -v writes the DSP's stream status to PLAYOUT.BIN
+; seconds of tune time; -v writes the DSP's stream status to PLAYOUT.BIN (with -p
+; the DSP renders as it does without -v, with no checksum: the timing a listener gets)
 ; afterwards (tools/player/play_gate.py: big-endian longs, final render clock,
 ; checksum, least ring fill and overtakes while fed, SSI underrun flag,
 ; overtakes at the end, 6510 cycles run, 200 Hz ticks taken).
@@ -213,8 +214,12 @@ parse:
         addq.l  #2,a0
         or.b    #$20,d1
         cmp.b   #'v',d1
-        bne.s   .arg
+        bne.s   .plain
         move.l  #1,opt_verify
+        bra.s   .next
+.plain: cmp.b   #'p',d1
+        bne.s   .arg
+        move.l  #1,opt_plain
         bra.s   .next
 .arg:   bsr.s   .skip
         bsr.s   .number
@@ -381,6 +386,14 @@ play:
         move.l  #DSP_CMD_STREAM_START,d0
         bsr     dsp_put
         bsr     dsp_get
+        tst.l   opt_plain               ; the checksum is the gate's: without -v, or with -p, the DSP leaves it out
+        bne.s   .nosum
+        tst.l   opt_verify
+        bne.s   .sum
+.nosum: move.l  #DSP_CMD_STREAM_PLAIN,d0
+        bsr     dsp_put
+        bsr     dsp_get
+.sum:
         move.l  HZ200.w,results+28
 
         bsr     log_reset               ; the init routine: its writes start at cycle 0
@@ -633,6 +646,7 @@ opt_song:       ds.l    1
 opt_model:      ds.l    1
 opt_seconds:    ds.l    1
 opt_verify:     ds.l    1
+opt_plain:      ds.l    1
 end_cycle:      ds.l    1
 gen_cycle:      ds.l    1               ; 6510 cycles run: every write below it is known
 gen_done:       ds.l    1

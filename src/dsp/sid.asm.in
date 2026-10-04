@@ -97,6 +97,7 @@ G_FCNT          equ     $53             ; write queue entries
 G_CYC           equ     $54             ; render clock, SID cycles mod 2^24
 G_UNDER         equ     $55             ; times the transmitter overtook the renderer
 G_TUE           equ     $56             ; bit 0: the SSI reported a transmit underrun
+G_PLAIN         equ     $57             ; stream: nonzero: no checksum (DSP_CMD_STREAM_PLAIN)
 F_WL            equ     $58             ; the filter outputs' gains / 2 (Q23, host-derived with the coefficients):
 F_WB            equ     $59             ; low-pass, band-pass, high-pass,
 F_WH            equ     $5a
@@ -112,9 +113,9 @@ BL_MAXCNT       equ     2047*$fff       ; the edge countdown is kept in units of
 FIFO_BASE       equ     $3400           ; write queue: 256 entries of cycle, register, value
 FIFO_END        equ     $3700
 FIFO_SIZE       equ     256
-RING_BASE       equ     $3800           ; 512 stereo frames; the SSI interrupt reads it through r3/m3
-RING_WORDS      equ     1024
-RING_TARGET     equ     768             ; render ahead until this many words wait
+RING_BASE       equ     $3800           ; 1024 stereo frames (to X:$3fff); the SSI interrupt reads it through r3/m3
+RING_WORDS      equ     2048
+RING_TARGET     equ     1536            ; render ahead until this many words wait (768 frames, 15.6 ms)
 WREM_IDLE       equ     $400000         ; G_WREM with nothing queued (re-armed when it runs out)
 
 ;@equates
@@ -385,6 +386,9 @@ ml_cmd: movep   x:m_hrx,a
         move    #>DSP_CMD_STREAM_STOP,x0
         cmp     x0,a
         jeq     cmd_stream_stop
+        move    #>DSP_CMD_STREAM_PLAIN,x0
+        cmp     x0,a
+        jeq     cmd_stream_plain
 reply_error:
         move    #>DSP_REPLY_ERROR,a
         jmp     reply
@@ -443,10 +447,15 @@ ssi_underrun:                           ; long interrupt: SSISR then TX clears T
         bset    #0,x:G_TUE
         rti
 
+cmd_stream_plain:
+        move    #>1,x0
+        move    x0,x:G_PLAIN
+        jmp     reply_ok
+
 cmd_stream_start:
         clr     a
         move    #>G_WRET+1,r0
-        rep     #$57-$46
+        rep     #$58-$46
         move    a,x:(r0)+               ; stream variables and status
         move    #>RING_BASE,r0
         rep     #RING_WORDS
@@ -650,6 +659,9 @@ ss_room:
         asl     b           x:G_LAST,a
         add     b,a
         move    a1,x:G_LAST
+        move    x:G_PLAIN,a
+        tst     a
+        jne     ss_plain
         do      x0,ss_end
         jset    #0,x:m_hsr,ss_break     ; the host calls
         move    x:<G_HREM,a
@@ -677,6 +689,27 @@ ss_room:
         sub     x0,a
         move    a1,x:<G_HREM
 ss_end:
+        jmp     ss_wrap
+ss_plain:                               ; the same run without the checksum
+        do      x0,ss_pend
+        jset    #0,x:m_hsr,ss_break
+        move    x:<G_HREM,a
+        tst     a
+        jle     ss_break
+        jsr     <frame
+        move    y:<T_OUT,x0
+        move    #>$80,y0
+        mpy     x0,y0,a     x:G_WP,r1
+        move    a1,b2
+        move    a0,b1
+        move    b,x:(r1)+
+        move    b,x:(r1)+
+        move    r1,x:G_WP
+        move    x:<G_HREM,a
+        move    x:<G_N,x0
+        sub     x0,a
+        move    a1,x:<G_HREM
+ss_pend:
         jmp     ss_wrap
 ss_break:
         dc      $00008c                 ; enddo (written as data: the assembler wants it inside the loop's text)

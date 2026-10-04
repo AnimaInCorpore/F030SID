@@ -49,7 +49,7 @@ def one(args, tune, model):
     shutil.copyfile(tune, os.path.join(gate, "TUNE.SID"))
     shutil.copyfile(args.player, os.path.join(gate, "F030SID.TOS"))
     with open(os.path.join(gate, "AUTOPLAY.INF"), "w") as f:
-        f.write(f"TUNE.SID -t {args.seconds} -m {model} -v")
+        f.write(f"TUNE.SID -t {args.seconds} -m {model} -v" + (" -p" if args.plain else ""))
     out = os.path.join(gate, "PLAYOUT.BIN")
     if os.path.exists(out):
         os.remove(out)
@@ -66,16 +66,16 @@ def one(args, tune, model):
         return label, f"no output; console:\n{open(os.path.join(gate, 'hatari.out')).read()[-400:]}"
     g_cycles, g_sum, minfill, over_fed, tue, over_end, cpu_cycles, ticks = struct.unpack(">8I", open(out, "rb").read())
     play = frames * 512 / 25175000
-    info = (f"{frames} frames in {ticks / 200:.2f} s (playing time {play:.2f} s), least ring fill {minfill} of 768 words")
+    info = (f"{frames} frames in {ticks / 200:.2f} s (playing time {play:.2f} s), least ring fill {minfill} of 1536 words")
     if g_cycles != cycles:
         return label, f"FAIL: {g_cycles} cycles rendered, expected {cycles}; {info}"
-    if g_sum != checksum:
+    if g_sum != checksum and not args.plain:
         return label, f"FAIL: checksum ${g_sum:06x}, expected ${checksum:06x}; {info}"
     if over_fed or (tue & 1):
         return label, f"FAIL: not real time: {over_fed} overtakes, SSI underrun flag {tue & 1}; {info}"
     if abs(ticks / 200 - play) > 0.06:
         return label, f"FAIL: not paced by the transmitter; {info}"
-    return label, f"identical, real time: {info}"
+    return label, f"{'real time (no checksum)' if args.plain else 'identical, real time'}: {info}"
 
 
 def tune_model(tune):
@@ -99,6 +99,8 @@ def main():
     ap.add_argument("--vbls-per-second", type=int, default=60,
                     help="emulated VBLs allowed per second of tune (more lets a tune that is slower than real time finish)")
     ap.add_argument("--jobs", type=int, default=1)
+    ap.add_argument("--plain", action="store_true",
+                    help="play as without -v (the DSP leaves the checksum out): the timing only, nothing is compared")
     ap.add_argument("tunes", nargs="*")
     args = ap.parse_args()
     for k in ("build", "psidref", "make_vec", "player", "hatari", "tos"):

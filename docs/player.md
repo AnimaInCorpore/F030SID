@@ -23,21 +23,26 @@ Giana Sisters, Tetris: samples from interrupts) differ within the first writes, 
 expected. Player gate, 30 s each with the tune's model: the DSP's checksum equals
 the reference's on every PSID tune, but real time is held by three only.
 
-| tune | model | 30 s of tune take | overtakes | least ring fill |
-| --- | --- | ---: | ---: | ---: |
-| Ocean Loader 2 | 6581 | 30.02 s | 0 | 667 |
-| Last Ninja 2 | 6581 | 30.09 s | 0 | 411 |
-| Cybernoid II | 6581 | 30.09 s | 0 | 8 |
-| Turrican | 6581 | 30.30 s | 10 | 0 |
-| Commando | 6581 | 31.49 s | 25 | 0 |
-| Monty on the Run | 6581 | 34.19 s | 88 | 0 |
-| Edge of Disgrace | 8580 | 36.49 s | 170 | 0 |
-| Wizball | 6581 | 37.42 s | 287 | 0 |
-| Ghouls 'n Ghosts | 6581 | 43.38 s | 246 | 0 |
-| RoboCop 3 | 8580 | 49.06 s | 260 | 0 |
+| tune | model | first run | now (`--plain`) | overtakes now | least ring fill of 1536 |
+| --- | --- | ---: | ---: | ---: | ---: |
+| Ocean Loader 2 | 6581 | 30.02 s | 30.02 s | 0 | 1451 |
+| Last Ninja 2 | 6581 | 30.09 s | 30.09 s | 0 | 1417 |
+| Cybernoid II | 6581 | 30.09 s | 30.02 s | 0 | 711 |
+| Turrican | 6581 | 30.30 s | 30.06 s | 2 | 22 |
+| Commando | 6581 | 31.49 s | 31.04 s | 49 | 0 |
+| Ghouls 'n Ghosts | 6581 | 43.38 s | 33.26 s | 146 | 0 |
+| Monty on the Run | 6581 | 34.19 s | 33.70 s | 177 | 0 |
+| Edge of Disgrace | 8580 | 36.49 s | 34.19 s | 195 | 0 |
+| Wizball | 6581 | 37.42 s | 35.95 s | 283 | 0 |
+| RoboCop 3 | 8580 | 49.06 s | 36.08 s | 281 | 0 |
 
-So the kernel's mean cost on real music is 100-165% of the frame, not the 85% of
-the synthetic `music_*` traces. The overtake counts above are too low (a lap during a
+"First run" is the kernel as the tunes first met it; "now" has the resting envelope taken in
+blocks, the stream without its checksum (`play_gate.py --plain`: how the player runs without
+`-v`) and the ring doubled, see `dsp-kernel.md` (Cost). The 0.02-0.09 s over 30 s of the tunes
+that hold real time is the start (the init routine runs after the stream starts).
+
+So the kernel's mean cost on real music was 100-165% of the frame and is 100-120%
+now, not the 85% of the synthetic `music_*` traces. The overtake counts above are too low (a lap during a
 run that the host's call ended was not seen; fixed since: Wizball counts 713, Monty
 on the Run 401), the elapsed time is the reliable figure. Where the time goes: the profile of two tunes in
 `dsp-kernel.md` (Cost); ideas from the OPL kernel in `scummvm-opl-hints.md`.
