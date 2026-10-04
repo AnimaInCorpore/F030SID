@@ -9,7 +9,7 @@ coefficient words the 68030 would derive); the 24-bit words the DSP returns
 (three voices and the chip output after filter, mixer and external filter;
 VOICEOUT.BIN) must equal the expected output exactly.
 
-  voice_dsp_gate.py --vasm V --vlink L --hatari H --tos ROM [--quick] [traces...]
+  voice_dsp_gate.py --vasm V --vlink L --hatari H --tos ROM [--quick] [--jobs N] [traces...]
 
 Traces default to the ones the kernel's current milestone supports (see
 SUPPORTED); a named trace is run whether or not it is listed.
@@ -20,6 +20,7 @@ import os
 import struct
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.normpath(os.path.join(HERE, "..", ".."))
@@ -101,6 +102,7 @@ def main():
     ap.add_argument("--timeout", type=int, default=240)
     ap.add_argument("--models", default="6581,8580")
     ap.add_argument("--quick", action="store_true", help="two traces, one model")
+    ap.add_argument("--jobs", type=int, default=1, help="Hatari runs in parallel")
     ap.add_argument("traces", nargs="*")
     args = ap.parse_args()
     for k in ('build', 'make_vec', 'vasm', 'vlink', 'hatari', 'tos'):
@@ -112,9 +114,9 @@ def main():
         names, models = names[:2], models[:1]
     ok = True
     print(f"{'trace':<18}{'model':>6}{'frames':>8}  result")
-    for name in names:
-        for model in models:
-            err, n, _ = one(args, name, model)
+    runs = [(name, model) for name in names for model in models]
+    with ThreadPoolExecutor(max_workers=args.jobs) as pool:      # each run has its own directory
+        for (name, model), (err, n, _) in zip(runs, pool.map(lambda r: one(args, *r), runs)):
             print(f"{name:<18}{model:>6}{n:>8}  {'identical' if err is None else 'FAIL: ' + err}")
             sys.stdout.flush()
             ok &= err is None

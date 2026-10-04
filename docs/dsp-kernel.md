@@ -96,7 +96,7 @@ indexed move per variable. So the per-voice code is written once, in
 instantiates it three times with absolute addresses. In a voice section `S_X` is
 this voice's variable, `SRC_X` the voice that syncs and ring-modulates it, `DST_X`
 the voice it syncs, and every label gets a `_0/_1/_2` suffix. The generated
-`build/dsp/SID.ASM` is 3,000+ lines; the kernel is 3,747 words (to P:$0ea3),
+`build/dsp/SID.ASM` is 4,600 lines; the kernel ends at P:$11f7,
 still under the P:$1400 limit above which external Y begins.
 
 ### Gate
@@ -152,12 +152,15 @@ register cleared (zero wait states on external memory).
 | P | $0000 | `jmp start` (reset vector) |
 | P | $0040-$007f | stage-two loader (reserved) |
 | P | $0080- | kernel; spills into external P above $01ff |
-| X internal | $00-$0f | frame globals and configuration (`G_*`) |
-| X internal | $10-$87 | the three voice blocks, 40 words each (`V0_*`, `V1_*`, `V2_*`) |
+| X internal | $00-$0f | frame globals, filter coefficients, frame constants (short addresses) |
+| X, Y internal | $10-$3f | the three voices' frame variables, 16 X and 16 Y words each (`gen_sid_asm.py`) |
+| Y internal | $00-$0f | mixer weights and constants |
+| Y internal | $40- | the voices' variables only register writes touch |
+| X internal | $40-$43 | configuration |
 | X internal | $88-$97 | rate counter periods (host-loaded) |
 | X internal | $98-$a7 | sustain levels (host-loaded) |
 | X internal | $a8-$c7 | register shadow for `READ_REG` |
-| X external | $0200-$02ff | envelope DAC (host-loaded) |
+| X external | $0200-$03ff | envelope table (host-loaded) |
 | X external | $0400-$13ff | waveform DAC (host-loaded) |
 | X external | $1400-$23ff, $2400-$33ff | combined waveform tables 6, 7 (host-loaded) |
 | Y external | $1400-$23ff, $2400-$33ff | combined waveform tables 3, 5 (host-loaded) |
@@ -165,7 +168,7 @@ register cleared (zero wait states on external memory).
 External P aliases external Y (docs/dsp56001-notes.md): the kernel stays below
 P:$1400 and the Y tables sit above it. The Hatari gate exercises this aliasing.
 
-## Protocol (v5)
+## Protocol (v6)
 
 `src/dsp/protocol.inc`: every command is a burst of 24-bit host words and gets
 exactly one reply word. `PING`, `WRITE_REG reg,value`, `READ_REG reg`, `RESET`,
@@ -173,44 +176,51 @@ exactly one reply word. `PING`, `WRITE_REG reg,value`, `READ_REG reg`, `RESET`,
 `CONFIG zero,ttl,model,shift_reset_start,hp_cancel,mix_k,filter_gain` (filter gain Q22),
 `FILTER a1,a2,a3,k4` (the TPT coefficient words for the current fc and res),
 `FRAME` (four reply words: the voice 1, 2 and 3 outputs and the chip output, each
-a 24-bit two's-complement word). The one-reply rule of the earlier versions holds
+a 24-bit two's-complement word). v6: the host loads the envelope table as 512 words at
+`DSP_X_ENV_TAB` (per envelope value: DAC << 13, and the exponential counter period that starts
+there) and the wave DAC as `(DAC - zero) << 10`; `CONFIG` must follow the table loads. The one-reply rule of the earlier versions holds
 for every other command.
 
 ## Next
 
-0. **The kernel is still over the real-time budget at 49.17 kHz, by about 1.6 times on music.**
-   Measured with `tools/dsp/profile_frames.py` (six whole frames sampled through a gate run; the
-   budget is 326 cycles per frame at 49.17 kHz, 488 at 32.8 kHz, 650 at 24.6 kHz):
+0. **The synthesis fits the 49.17 kHz frame, bit-exact.** Measured with
+   `tools/dsp/profile_frames.py` (twelve whole frames sampled through a gate run; the budget is
+   326 cycles per frame):
 
-   | trace | first version | now |
-   | --- | --- | --- |
-   | `music_1` (tracker-style, no filter) | 756 | 515 |
-   | `music_2` (the same with a filter sweep) | 805 | 564 |
-   | `tone_saw_7509` (AD=0, an extreme envelope) | 1,102 | 670 |
-   | `rand_*` (random registers: every combined waveform, sync, ring) | 1,070-1,350 | 920-1,130 |
+   | trace | first version | previous | now: mean | max of the samples |
+   | --- | --- | --- | --- | --- |
+   | `music_1` (tracker-style, no filter) | 756 | 515 | 150 | 203 |
+   | `music_2` (the same with a filter sweep) | 805 | 564 | 187 | 240 |
+   | `tone_saw_7509` (AD=0: a rate step every 8 cycles) | 1,102 | 670 | 180 | 217 |
+   | `sync_ring` (hard sync and ring between all voices, AD=0) | | | 277 | 571 |
+   | `rand_1`, `rand_2` (random registers: combined waveforms, sync, test) | 1,070-1,350 | 920-1,130 | 260, 323 | 397, 404 |
 
-   The `music_*` traces are the realistic target (pulse arpeggio with PWM and vibrato, saw bass,
-   triangle/noise drums, typical ADSR values); the tone and random traces are stress cases. What
-   was done, each step gated bit for bit against the reference:
-   - envelope: a frame with no rate step is a short counter update; a frame whose steps change
-     nothing (idle at the sustain level, or held at zero) is applied in closed form;
-   - oscillator: the noise-register step test is one predicate for the usual delta; the pulse
-     compare uses a stored `pw << 12` and a conditional transfer;
-   - frame: with no sync bit set anywhere, the sync search and the split loop are skipped;
-   - memory: each voice's 16 hot variables sit in X short addresses (one word, fusable into
-     parallel moves) and its 22 cold ones in Y memory (`gen_sid_asm.py`);
-   - output: the waveform-code routine is chosen when the control register is written
-     (`set_handler`): plain triangle, saw, pulse and noise run short handlers; combined
-     waveforms, ring-modulated triangle and no waveform keep the general path.
+   The numbers cover `cmd_frame` to `fr_done`: synthesis only, not the host-port replies, the
+   register writes, or the stages still to come (SSI, band-limiting). A frame in which a sync
+   source's msb toggles (the oscillators are clocked twice) or several events coincide still
+   exceeds 326 cycles, so the SSI stage must render into a small buffer ahead of the
+   transmitter; real time is proven only when the worst rolling buffer load is measured there.
 
-   Where music_1's 515 cycles go: oscillator clock, msb, noise step and pulse about 170; DAC and
-   output stage about 110; envelope about 80; frame bookkeeping 40; mixer 50 (110 with the
-   filter routed). Left on the table, roughly 60-80 cycles: a no-sync oscillator variant that
-   skips the msb, fusing the remaining moves, a reserved pointer for the wave DAC. That brings
-   music to about 440-480: out of reach of 326, inside 488. The honest choices are therefore a
-   codec rate of 32.8 kHz (prescale 2; sid-feasibility.md argues for 49.17 kHz because of
-   aliasing, which polyBLEP largely answers) or giving up exactness somewhere (lazy noise register,
-   approximate envelope), each of which needs a listening test.
+   How the frame is built (`sid.asm.in`, all gated bit for bit, `tools/dsp/gate_results_rt.txt`):
+   - phase: one 48-bit word `acc << 12` (X = the 12-bit waveform index, Y = the rest), advanced
+     by one MAC with `n << 11`; `S_THR` is the next index at which anything else happens (a
+     noise-register step at each rising edge of bit 19, the msb rising, the wrap), so the frame
+     is add, compare, store, and falls out of line (`oscs`) only for an event;
+   - envelope: the rate counter is kept as the cycles left to its next step (`S_REM`); the
+     frame subtracts and compares, and `envs` dispatches to a handler per state (`S_EH`). A
+     gate change parks the counter as a number and lets `eh_pipe` apply the state change. A
+     voice frozen at zero or resting at its sustain level only cycles the rate counter;
+   - output: a handler per voice chosen on the control write (`S_WH`); the host loads the DAC
+     tables offset and scaled (envelope DAC << 13, (wave DAC - zero) << 10) so one MPY is the
+     voice output, and the envelope DAC word is cached when the envelope value changes;
+   - lazy state, refreshed where it is observed: the pulse level (only under the test bit or
+     after a hard sync in a frame's last step is it latched, as reSID computes it in
+     `clock()`), the noise output (only while the noise bit is on), the noise write-back
+     (skipped when it has nothing to clear);
+   - hard sync: a frame with a sync bit set runs the same oscillator step inside the split
+     loop; a cheap test against `S_THR` decides whether the exact toggle search is needed;
+   - everything a normal frame executes is in internal P memory with short jumps, loads ride
+     on ALU instructions as parallel moves, and the frame's constants come from short memory.
 1. The 68030 side of the coefficients: `sid_filter_coeffs()` in m68k assembly, gated
    against the C routine, and the tables (about 16 KB per model) in the executable.
 2. Band-limited output (sample-instant phase, polyBLEP-4) in front of the mixer

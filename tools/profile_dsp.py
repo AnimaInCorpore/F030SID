@@ -28,8 +28,10 @@ import re
 from collections import defaultdict
 from pathlib import Path
 
-LABEL_RE = re.compile(r"^\s*\d+\s+(?:[PXY]:[0-9A-F]+\s+)?\s*([A-Za-z_][A-Za-z0-9_]*):\s*$")
+LABEL_RE = re.compile(r"^\s*\d+\s+(?:[PXY]:[0-9A-F]+\s+)?\s*([A-Za-z_][A-Za-z0-9_]*):\s*(?:;.*)?$")
 ADDRESS_RE = re.compile(r"^\s*\d+\s+([PXYL]):([0-9A-F]+)\b")
+# a label with its instruction on the same line
+INLINE_RE = re.compile(r"^\s*\d+\s+P:([0-9A-F]+)\s+[0-9A-F]{6}(?:\s[0-9A-F]{6})?\s+([A-Za-z_][A-Za-z0-9_]*):")
 # Hatari prints the percentage through the host locale ("0,01%" on a German
 # Windows host); the counts beside it are plain integers.
 PROFILE_RE = re.compile(r"^p:([0-9a-f]+).*?\s([0-9]+[.,][0-9]+)% \((\d+), (\d+), (\d+)\)$")
@@ -44,6 +46,9 @@ def parse_listing(path: Path) -> dict[tuple[str, str], int]:
         if label:
             pending.append(label.group(1))
             continue
+        inline = INLINE_RE.match(line)
+        if inline:
+            symbols[("P", inline.group(2))] = int(inline.group(1), 16)
         address = ADDRESS_RE.match(line)
         if not address or not pending:
             continue

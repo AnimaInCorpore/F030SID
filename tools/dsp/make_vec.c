@@ -4,7 +4,7 @@
  *   make_vec <6581|8580> <trace> <resid_dir> <vec.i> <expected.txt>
  *
  * vec.i is an m68k include for tools/dsp/voicetest.s: the tables the DSP needs
- * (rate periods, sustain levels, envelope and wave DAC), the chip constants,
+ * (rate periods, sustain levels, envelope and wave DAC in the kernel's scaling), the chip constants,
  * the frame count, and the register writes tagged with the frame they are
  * applied before (the same rule as ref_run: a write belongs to the frame whose
  * cycle range contains it). expected.txt has the reference model's voice 0
@@ -98,9 +98,27 @@ int main(int argc, char **argv)
     table(vec, "tab_rate", tmp, 16);
     for (i = 0; i < 16; i++) tmp[i] = sid_tab_sustain_level()[i];
     table(vec, "tab_sust", tmp, 16);
-    for (i = 0; i < 256; i++) tmp[i] = sid_tab_env_dac(model)[i];
-    table(vec, "tab_envdac", tmp, 256);
-    for (i = 0; i < 4096; i++) tmp[i] = sid_tab_wave_dac(model)[i];
+    /* The DAC tables as the kernel wants them (protocol.inc): scaled so that one
+     * fractional multiply of the two words is the voice output, the wave zero
+     * folded in, and the envelope DAC paired with the exponential counter
+     * period that starts at each envelope value. */
+    for (i = 0; i < 256; i++) {
+        int per = 0;
+        switch (i) {
+        case 0xff: per = 1; break;
+        case 0x5d: per = 2; break;
+        case 0x36: per = 4; break;
+        case 0x1a: per = 8; break;
+        case 0x0e: per = 16; break;
+        case 0x06: per = 30; break;
+        case 0x00: per = -1; break;
+        }
+        tmp[2 * i] = (unsigned)sid_tab_env_dac(model)[i] << 13;
+        tmp[2 * i + 1] = (unsigned)per & 0xffffff;
+    }
+    table(vec, "tab_env", tmp, 512);
+    for (i = 0; i < 4096; i++)
+        tmp[i] = (unsigned)(((int)sid_tab_wave_dac(model)[i] - (int)sid_wave_zero(model)) * 1024) & 0xffffff;
     table(vec, "tab_wavedac", tmp, 4096);
     {
         static const int combined[4] = { 3, 5, 6, 7 };
