@@ -43,14 +43,17 @@ SNAPSHOT_BEFORE equ     40000           ; cycles before the end at which the rea
 
 ; Load `count` words from `table` into DSP X (LOADX) or Y (LOADY) memory at `addr`.
         macro   LOADX addr,count,table
-        move.l  #DSP_CMD_LOAD_X,d0
-        bsr     dsp_put
+        LOADC   DSP_CMD_LOAD_X,\1,\2,\3
+        endm
+        macro   LOADC cmd,addr,count,table
         move.l  #\1,d0
         bsr     dsp_put
         move.l  #\2,d0
         bsr     dsp_put
-        lea     \3,a2
-        move.w  #\2-1,d3
+        move.l  #\3,d0
+        bsr     dsp_put
+        lea     \4,a2
+        move.w  #\3-1,d3
 lx\@:   move.l  (a2)+,d0
         bsr     dsp_put
         dbra    d3,lx\@
@@ -132,7 +135,7 @@ run_stream:
         LOADY   DSP_Y_WAVE3,4096,tab_wave3
         LOADY   DSP_Y_WAVE5,4096,tab_wave5
         LOADX   DSP_X_WAVE6,4096,tab_wave6
-        LOADX   DSP_X_WAVE7,4096,tab_wave7
+        LOADC   DSP_CMD_LOAD_X_HI,DSP_X_WAVE7,4096,tab_wave7   ; (after table 6: into its upper bits)
         move.l  #DSP_CMD_CONFIG,d0
         bsr     dsp_put
         move.l  #cfg_wave_zero,d0

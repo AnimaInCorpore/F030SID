@@ -35,6 +35,7 @@ def main():
     ap.add_argument("psidref")
     ap.add_argument("sidtrace")
     ap.add_argument("--seconds", type=int, default=60)
+    ap.add_argument("--song", type=int, default=0, help="subsong number (0 selects the tune default)")
     ap.add_argument("--out", default="build/music")
     ap.add_argument("tunes", nargs="+")
     args = ap.parse_args()
@@ -42,6 +43,8 @@ def main():
     ok = True
     for tune in args.tunes:
         name = os.path.splitext(os.path.basename(tune))[0]
+        if args.song:
+            name += f".s{args.song}"
         head = open(tune, "rb").read(0x7c)
         magic, version = head[:4].decode("latin-1"), struct.unpack(">H", head[4:6])[0]
         play = struct.unpack(">H", head[12:14])[0]
@@ -49,8 +52,8 @@ def main():
         what = f"{magic} play ${play:04x} {'8580' if (flags >> 4) & 3 == 2 else '6581'}"
         real_path = os.path.join(args.out, name + ".lsfp.trace")
         ref_path = os.path.join(args.out, name + ".ref.trace")
-        subprocess.run([args.sidtrace, "-t", str(args.seconds), "-o", real_path, tune], capture_output=True, check=True)
-        subprocess.run([args.psidref, "-t", str(args.seconds), tune, ref_path], capture_output=True, check=True)
+        subprocess.run([args.sidtrace, "-s", str(args.song), "-t", str(args.seconds), "-o", real_path, tune], capture_output=True, check=True)
+        subprocess.run([args.psidref, "-s", str(args.song), "-t", str(args.seconds), tune, ref_path], capture_output=True, check=True)
         real, ref = writes(real_path), writes(ref_path)
         va, vb = [w[1:] for w in real], [w[1:] for w in ref]
         first = next((i for i in range(min(len(va), 400)) if vb and va[i:i + 8] == vb[:8]), None)

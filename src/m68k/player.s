@@ -298,7 +298,7 @@ dsp_setup:
         LOADTAB DSP_CMD_LOAD_Y,DSP_Y_WAVE3,4096,SIDTAB_WAVE3
         LOADTAB DSP_CMD_LOAD_Y,DSP_Y_WAVE5,4096,SIDTAB_WAVE5
         LOADTAB DSP_CMD_LOAD_X,DSP_X_WAVE6,4096,SIDTAB_WAVE6
-        LOADTAB DSP_CMD_LOAD_X,DSP_X_WAVE7,4096,SIDTAB_WAVE7
+        LOADTAB DSP_CMD_LOAD_X_HI,DSP_X_WAVE7,4096,SIDTAB_WAVE7 ; (after table 6: into its upper bits)
         move.l  #DSP_CMD_CONFIG,d0
         bsr     dsp_put
         move.l  tab_base,a2
@@ -381,7 +381,13 @@ play:
         clr.l   gen_done
         clr.l   fc_now
         clr.l   res_now
+        clr.l   fc_coef
+        clr.l   res_coef
         clr.l   snap_done
+        lea     reg_shadow,a0           ; no register has been written yet
+        moveq   #24,d0
+.shad:  move.w  #$ffff,(a0)+
+        dbra    d0,.shad
 
         move.l  #DSP_CMD_STREAM_START,d0
         bsr     dsp_put
@@ -493,6 +499,19 @@ log_reset:
 ; The logged SID writes become queue entries (cycle, register, value); a write
 ; to the filter's cutoff or resonance is followed by the coefficient words as
 ; pseudo registers 32-39.
+;
+; A write that repeats the register's value and changes nothing in the model
+; (src/ref/sid_ref.c, sid_ref_write) is not sent: tunes that rewrite every
+; register several times a frame otherwise spend the DSP's time on it. That is
+;   - frequency, attack/decay, sustain/release, the filter registers and the
+;     volume: the write stores the same value, and what it derives from it
+;     (rate period, coefficients) is a function of the stored values alone;
+;   - the pulse width, while the voice's test and sync bits are clear and its
+;     waveform is none or a single one: the write's only other effect is
+;     pulse_output = (acc >> 12) >= pw, which is what every clock left there
+;     (the test bit, a hard sync restart and the 6581's saw combinations are
+;     the cases in which it is not).
+; The control register is always sent.
 log_to_pend:
         movem.l d0-d4/a0-a3,-(sp)
         lea     wlog,a2
@@ -502,7 +521,30 @@ log_to_pend:
 .entry: move.l  (a2)+,d2                ; cycle
         move.l  (a2)+,d3                ; register
         move.l  (a2)+,d0                ; value
-        move.l  d2,(a3)+
+        cmp.w   #24,d3
+        bhi.s   .keep
+        lea     reg_shadow,a0
+        cmp.w   (a0,d3.w*2),d0
+        bne.s   .new
+        lea     reg_kind,a1
+        move.b  (a1,d3.w),d1
+        beq     .next                   ; nothing but the value: not sent
+        bmi.s   .keep                   ; control
+        ext.w   d1                      ; pulse width: d1 = the voice's control register
+        move.w  (a0,d1.w*2),d1
+        cmp.w   #$ff,d1
+        bhi.s   .keep                   ; (not written yet)
+        btst    #3,d1
+        bne.s   .keep                   ; test
+        btst    #1,d1
+        bne.s   .keep                   ; sync
+        lsr.w   #4,d1
+        lea     wave_single,a1
+        tst.b   (a1,d1.w)
+        bne     .next
+        bra.s   .keep
+.new:   move.w  d0,(a0,d3.w*2)
+.keep:  move.l  d2,(a3)+
         move.l  d3,(a3)+
         move.l  d0,(a3)+
         cmp.w   #21,d3
@@ -528,6 +570,13 @@ log_to_pend:
         move.l  d1,fc_now
 .coef:  move.l  fc_now,d0
         move.l  res_now,d1
+        cmp.l   fc_coef,d0
+        bne.s   .changed
+        cmp.l   res_coef,d1
+        beq     .next                   ; original SID write remains queued; coefficients are already current
+.changed:
+        move.l  d0,fc_coef
+        move.l  d1,res_coef
         move.l  tab_base,a0
         lea     coef,a1
         bsr     filter_coeffs
@@ -630,6 +679,10 @@ txt_done:       dc.b    'done',13,10,0
 txt_key:        dc.b    'press a key',13,10,0
 inf_name:       dc.b    'AUTOPLAY.INF',0
 out_name:       dc.b    'PLAYOUT.BIN',0
+; per register 0-24, for a write that repeats the value: 0 = not sent, -1 = sent,
+; else the voice's control register (pulse width: see log_to_pend)
+reg_kind:       dc.b    0,0,4,4,-1,0,0, 0,0,11,11,-1,0,0, 0,0,18,18,-1,0,0, 0,0,0,0
+wave_single:    dc.b    1,1,1,0,1,0,0,0,1,0,0,0,0,0,0,0 ; waveform 0, 1, 2, 4, 8
         even
 tab6581:        incbin  "sidtab_6581.bin"
 tab8580:        incbin  "sidtab_8580.bin"
@@ -656,8 +709,12 @@ h_sent:         ds.l    1
 dsp_free:       ds.l    1
 last_tick:      ds.l    1
 snap_done:      ds.l    1
+reg_shadow:     ds.w    25              ; the registers as last sent ($ffff: not yet)
+        even
 fc_now:         ds.l    1
 res_now:        ds.l    1
+fc_coef:        ds.l    1
+res_coef:       ds.l    1
 pend_head:      ds.l    1
 pend_tail:      ds.l    1
 coef:           ds.l    DSP_FILTER_WORDS

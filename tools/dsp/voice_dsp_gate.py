@@ -67,12 +67,21 @@ def one(args, name, model):
     env = dict(os.environ, SDL_VIDEODRIVER="dummy", SDL_AUDIODRIVER="dummy")
     # Hatari writes the console and logs to a file, not a pipe: with its output
     # piped it boots to the desktop without starting the program.
+    # Pterm0 follows Fclose and the final console message in voicetest.s.
+    # Quit there instead of spending the remaining VBL budget at the desktop.
+    # Missing or partial output still fails the comparisons below.
+    stop = os.path.join(gate, "quit.ini")
+    start = os.path.join(gate, "start.ini")
+    with open(stop, "w") as f:
+        f.write("quit\n")
+    with open(start, "w") as f:
+        f.write(f"b GemdosOpcode = 0 :once :trace :file {stop}\n")
     console = os.path.join(gate, "hatari.out")
     with open(console, "w") as f:
         r = subprocess.run(
             [args.hatari, "--machine", "falcon", "--dsp", "emu", "--tos", args.tos, "--patch-tos", "true",
              "--fast-boot", "true", "--fast-forward", "true", "--sound", "off", "--confirm-quit", "false",
-             "--run-vbls", str(args.vbls), "--conout", "2", "voicetest.tos"],
+             "--run-vbls", str(args.vbls), "--conout", "2", "--parse", start, "voicetest.tos"],
             cwd=gate, env=env, stdout=f, stderr=subprocess.STDOUT, timeout=args.timeout)
     want = [int(x) for x in open(exp).read().split()]
     if not os.path.exists(out):

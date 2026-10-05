@@ -3,7 +3,7 @@
 ; Every exchange is a burst of 24-bit host words followed by exactly one
 ; reply word. Commands are listed with their trailing argument words.
 
-DSP_PROTOCOL_VERSION equ     10
+DSP_PROTOCOL_VERSION equ     11
 
 DSP_CMD_PING        equ     $010000     ; -> DSP_REPLY_HELLO
 DSP_CMD_WRITE_REG   equ     $020000     ; reg, value -> OK
@@ -15,6 +15,8 @@ DSP_CMD_CONFIG      equ     $0b0000     ; wave zero, floating TTL, model (0 = 65
                                         ; (after the tables: it latches the envelope DAC words)
 DSP_CMD_FRAME       equ     $0c0000     ; -> four words: the voice 1, 2 and 3 outputs and the chip output of the next codec frame
 DSP_CMD_LOAD_Y      equ     $0d0000     ; address, count, count words (Y memory) -> OK
+DSP_CMD_LOAD_X_HI   equ     $0f0000     ; address, count, count words -> OK: each word becomes the upper twelve
+                                        ; bits of the X word there (the lower twelve stay): combined-waveform table 7
 DSP_CMD_FILTER      equ     $0e0000     ; a1, a2, a3, k4, wl, wb, wh, wleak (Q23 words, host-derived: the filter's
                                         ; coefficients, the three outputs' gains / 2, the low-pass share in the
                                         ; high-pass output) -> OK
@@ -27,7 +29,7 @@ DSP_FILTER_WORDS    equ     8
 DSP_CMD_STREAM_START equ    $100000     ; -> OK (clock 0, queue empty, transmitter on)
 DSP_CMD_STREAM_PUSH equ     $110000     ; count, count * (cycle, register, value), horizon -> queue entries free
 DSP_CMD_STREAM_READ equ     $120000     ; index -> status word: 0 started, 1 checksum, 2 least ring
-                                        ; fill (words), 3 queue entries, 4 render clock, 5 overtakes, 6 SSI underrun flag
+                                        ; fill (frames), 3 queue entries, 4 render clock, 5 overtakes, 6 SSI underrun flag
 DSP_CMD_STREAM_STOP equ     $130000     ; -> OK
 DSP_CMD_STREAM_PLAIN equ    $140000     ; -> OK (after START: render without the checksum, which costs
                                         ; ten cycles a frame and only the gates read)
@@ -56,5 +58,5 @@ DSP_Y_WAVE3         equ     $1c00
 DSP_Y_WAVE5         equ     $2c00
 DSP_Y_BLEP          equ     $007f       ; 129 words (internal Y): the polyBLEP step residual, Q23
                                         ; (S(i/64) - 1 for i = 0..128, see src/ref/sid_ref.c)
-DSP_X_WAVE6         equ     $1400
-DSP_X_WAVE7         equ     $2400
+DSP_X_WAVE6         equ     $1400       ; tables 6 and 7 share their words: 6 in the lower twelve bits (LOAD_X, first),
+DSP_X_WAVE7         equ     $1400       ; 7 in the upper twelve (LOAD_X_HI). That leaves X:$3000-$3fff to the stream's ring.

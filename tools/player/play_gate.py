@@ -38,10 +38,12 @@ def run(cmd, **kw):
 
 def one(args, tune, model):
     name = os.path.splitext(os.path.basename(tune))[0]
+    if args.song:
+        name += f".s{args.song}"
     gate = os.path.join(args.build, "play", f"{name}.{model}")
     os.makedirs(gate, exist_ok=True)
     trace = os.path.join(gate, "ref.trace")
-    run([args.psidref, "-t", str(args.seconds), tune, trace])
+    run([args.psidref, "-s", str(args.song), "-t", str(args.seconds), tune, trace])
     exp = os.path.join(gate, "stream_expected.txt")
     run([args.make_vec, model, trace, os.path.join(ROOT, "third_party", "resid"),
          os.path.join(gate, "vec.i"), os.path.join(gate, "expected.txt"), exp])
@@ -49,24 +51,32 @@ def one(args, tune, model):
     shutil.copyfile(tune, os.path.join(gate, "TUNE.SID"))
     shutil.copyfile(args.player, os.path.join(gate, "F030SID.TOS"))
     with open(os.path.join(gate, "AUTOPLAY.INF"), "w") as f:
-        f.write(f"TUNE.SID -t {args.seconds} -m {model} -v" + (" -p" if args.plain else ""))
+        f.write(f"TUNE.SID {args.song} -t {args.seconds} -m {model} -v" + (" -p" if args.plain else ""))
     out = os.path.join(gate, "PLAYOUT.BIN")
     if os.path.exists(out):
         os.remove(out)
+    # The player closes PLAYOUT.BIN before Pterm0. The VBL count remains a
+    # failure deadline; a completed run need not idle at the GEM desktop.
+    stop = os.path.join(gate, "quit.ini")
+    start = os.path.join(gate, "start.ini")
+    with open(stop, "w") as f:
+        f.write("quit\n")
+    with open(start, "w") as f:
+        f.write(f"b GemdosOpcode = 0 :once :trace :file {stop}\n")
     env = dict(os.environ, SDL_VIDEODRIVER="dummy", SDL_AUDIODRIVER="dummy")
     with open(os.path.join(gate, "hatari.out"), "w") as f:
         subprocess.run(
             [args.hatari, "--machine", "falcon", "--dsp", "emu", "--memsize", "14", "--tos", args.tos,
              "--patch-tos", "true", "--fast-boot", "true", "--fast-forward", "true", "--sound", "off",
              "--confirm-quit", "false", "--run-vbls", str(int(args.seconds * args.vbls_per_second + 900)), "--conout", "2",
-             "F030SID.TOS"],
+             "--parse", start, "F030SID.TOS"],
             cwd=gate, env=env, stdout=f, stderr=subprocess.STDOUT, timeout=args.timeout)
     label = f"{name:<20}{model:>6}"
     if not os.path.exists(out):
         return label, f"no output; console:\n{open(os.path.join(gate, 'hatari.out')).read()[-400:]}"
     g_cycles, g_sum, minfill, over_fed, tue, over_end, cpu_cycles, ticks = struct.unpack(">8I", open(out, "rb").read())
     play = frames * 512 / 25175000
-    info = (f"{frames} frames in {ticks / 200:.2f} s (playing time {play:.2f} s), least ring fill {minfill} of 1536 words")
+    info = (f"{frames} frames in {ticks / 200:.2f} s (playing time {play:.2f} s), least ring fill {minfill} of 3584 frames")
     if g_cycles != cycles:
         return label, f"FAIL: {g_cycles} cycles rendered, expected {cycles}; {info}"
     if g_sum != checksum and not args.plain:
@@ -94,6 +104,7 @@ def main():
     ap.add_argument("--hatari", required=True)
     ap.add_argument("--tos", required=True)
     ap.add_argument("--seconds", type=int, default=5)
+    ap.add_argument("--song", type=int, default=0, help="subsong number (0 selects the tune default)")
     ap.add_argument("--timeout", type=int, default=900)
     ap.add_argument("--models", default="6581,8580", help='chip models, or "tune": the one each tune asks for')
     ap.add_argument("--vbls-per-second", type=int, default=60,

@@ -18,9 +18,13 @@ under the DSP-calibrated Hatari only; nothing has run on a physical Falcon.
 
 Real tunes (twelve from HVSC, see [`docs/player.md`](docs/player.md)): on the ten
 PSID tunes the 6510 side writes what libsidplayfp writes and the DSP's samples
-equal the reference model's, but only three of them hold real time and a fourth
-nearly. The others need more than the DSP's 326 cycles per frame, by 3% to 20%;
-the two RSID tunes do not play. The kernel's cost is the open problem, not its correctness.
+equal the reference model's. As of 2026-10-05 all ten, and seven more demanding
+PSID tunes, play the first 30 seconds on calibrated Hatari without the
+transmitter overtaking the renderer; four end 0.1-0.2 s late, which the gate
+still counts as a failure. The two RSID tunes do not play. What was changed,
+what the measurement does not cover (whole tunes, hardware, the kernel's
+worst cases) and a full-quality audio-cache option are in
+[`docs/realtime.md`](docs/realtime.md).
 
 What exists:
 

@@ -23,6 +23,12 @@ Giana Sisters, Tetris: samples from interrupts) differ within the first writes, 
 expected. Player gate, 30 s each with the tune's model: the DSP's checksum equals
 the reference's on every PSID tune, but real time is held by three only.
 
+Later exact-output optimizations, a deeper ring and the player's dropping of
+writes that change nothing (`log_to_pend`) bring all ten into real time in
+the 30-second run, without overtakes; the measured results and the remaining
+limitations are in [realtime.md](realtime.md). The table below records the
+earlier player (its ring fills count words of the 1024-stereo-frame ring).
+
 | tune | model | first run | now (`--plain`) | overtakes now | least ring fill of 1536 |
 | --- | --- | ---: | ---: | ---: | ---: |
 | Ocean Loader 2 | 6581 | 30.02 s | 30.02 s | 0 | 1451 |

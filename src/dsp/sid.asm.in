@@ -28,8 +28,10 @@
 ; Register conventions: a, b, x0, x1, y0, y1, r0, r1, n0, n1 are scratch
 ; (y holds the frame's cycle count during phase A); y1 holds the written
 ; value across the write_reg handlers; r2 points at the wave DAC; r0/n0 and
-; r4-r7, n4, n5, n7 belong to the mixer (r0 is loaded every frame); r3/m3 is
+; r4-r6, n4, n5 belong to the mixer (r0 is loaded every frame); r3/m3 is
 ; the SSI transmit interrupt's ring pointer and nothing else may touch it.
+; n3 is the transmit interrupt's step (0 or 1) and r7/m7 its step table's
+; pointer; n6 is the stream write pointer.
 
         include 'ioequ.inc'
         include 'protocol.inc'
@@ -47,7 +49,7 @@ G_EPS           equ     $00             ; Q24 sample-instant fraction
 G_SYNCANY       equ     $01             ; bit 1: some voice has its sync bit set
 G_WREM          equ     $02             ; cycles from this frame's start to the first queued register write
 G_HREM          equ     $03             ; stream: cycles the host has released for rendering (horizon - clock)
-; The filter's coefficient block is read through r7 with parallel moves, the
+; The filter's coefficient block is read at short addresses in parallel moves, the
 ; routing and mode masks through r4 (Y memory), the states through r5/r6 (L memory).
 F_A1            equ     $04             ; TPT coefficients, Q23 words (host-derived)
 F_A2            equ     $05
@@ -78,12 +80,12 @@ G_ZERO          equ     $40             ; wave zero level (config; the host fold
 G_TTLSTART      equ     $41             ; floating TTL start (config)
 G_MODEL         equ     $42             ; 0 = 6581, 1 = 8580 (config)
 G_SRSTART       equ     $43             ; shift register reset start (config)
-G_DTOSC         equ     $44             ; sync frames: cycles left to clock the oscillators
+; n3 is the transmit interrupt's; n6 holds the stream write pointer.
 G_WRET          equ     $45             ; where a register write handler returns to
 G_STREAM        equ     $46             ; nonzero: the SSI stream runs
-G_DTMIN         equ     $47             ; sync frames: cycles of the current oscillator step
+G_DTMIN         equ     $3e             ; Y short: cycles of the current oscillator step
 G_HOR           equ     $48             ; stream: the horizon as the host last gave it
-G_WP            equ     $49             ; stream: ring write pointer
+; X:$49 is spare: the stream write pointer is kept in n6.
 G_LAST          equ     $4a             ; stream: ring fill after the last rendered frame
 G_PRIMED        equ     $4b             ; stream: the ring reached its target once
 G_FHEAD         equ     $4c             ; write queue: next entry out
@@ -92,7 +94,7 @@ G_FTAIL         equ     $4d             ; write queue: next entry in
 G_STAT          equ     $50
 G_STARTED       equ     $50             ; the first frame has been released: the ring is in use
 G_SUM           equ     $51             ; checksum of the rendered frames: sum = 3*sum + chip + v1 + v2 + v3
-G_MINFILL       equ     $52             ; least ring fill seen once primed, in words
+G_MINFILL       equ     $52             ; least ring fill seen once primed, in frames
 G_FCNT          equ     $53             ; write queue entries
 G_CYC           equ     $54             ; render clock, SID cycles mod 2^24
 G_UNDER         equ     $55             ; times the transmitter overtook the renderer
@@ -105,17 +107,20 @@ F_WLEAK         equ     $5b             ; and the low-pass share in the high-pas
 ; band-limiting (bl_corr and its callers)
 G_JUMPW         equ     $5c             ; wave DAC word of code $fff less that of code 0 (set by CONFIG)
 G_BLDAC         equ     $5d             ; the DAC word being corrected
+G_STEP          equ     $6a             ; two words, 1 and 0: the transmit interrupt's steps through the ring (r7, modulo 2)
+G_SLEFT         equ     $68             ; sync frames: the split frame's cycles left
+G_SCNT          equ     $67             ; sync frames: cycles without a source's msb toggle (fr_sync)
 G_BLPH          equ     $70             ; L: the phase at the sample instant
 BL_CYC16        equ     1313185         ; SID cycles per frame, Q16 (SID_CYC_Q24 >> 8)
 BL_MAXCNT       equ     2047*$fff       ; the edge countdown is kept in units of $fff, at most 2047 frames
 
 ; The stream's memory (external X, above the tables)
-FIFO_BASE       equ     $3400           ; write queue: 256 entries of cycle, register, value
-FIFO_END        equ     $3700
+FIFO_BASE       equ     $2400           ; write queue: 256 entries of cycle, register, value
+FIFO_END        equ     $2700
 FIFO_SIZE       equ     256
-RING_BASE       equ     $3800           ; 1024 stereo frames (to X:$3fff); the SSI interrupt reads it through r3/m3
-RING_WORDS      equ     2048
-RING_TARGET     equ     1536            ; render ahead until this many words wait (768 frames, 15.6 ms)
+RING_BASE       equ     $3000           ; 4096 frames, one word each (to X:$3fff); the SSI interrupt reads it through r3/m3
+RING_WORDS      equ     4096
+RING_TARGET     equ     3584            ; render ahead until this many frames wait (72.9 ms)
 WREM_IDLE       equ     $400000         ; G_WREM with nothing queued (re-armed when it runs out)
 
 ;@equates
@@ -139,9 +144,10 @@ S_SHADOW        equ     $a8             ; 32-word register shadow
         org     p:$0000
         jmp     start
 
-        org     p:$0010                 ; SSI transmit data: a fast interrupt, the next ring word
-        movep   x:(r3)+,x:m_tx
-        nop
+        org     p:$0010                 ; SSI transmit data: a fast interrupt. The ring holds one word
+        movep   x:(r3)+n3,x:m_tx        ; per frame; n3 alternates between 0 and 1, so each word goes
+        move    x:(r7)+,n3              ; out twice, as left and right. (r7 circles the two steps at
+                                        ; G_STEP: a fast interrupt must leave the condition codes alone.)
         org     p:$0012                 ; SSI transmit data with underrun: clear TUE, note it
         jsr     ssi_underrun
 
@@ -175,6 +181,7 @@ fr_n:   move    a1,x:<G_EPS
         jset    #1,x:<G_SYNCANY,fr_sync
 
 ; Phase A: envelope countdown and oscillator. y1 = n, y0 = n << 11.
+fr_phase_a:
 ;@voice
         move    x:<S_REM,b                      ; cycles to the next rate step
         sub     y1,b        x:<S_FREQE,x0
@@ -213,19 +220,25 @@ hsaw:                                           ; code = ix
         and     x1,a        x:<S_BLCNT,b
         sub     x1,b
         jlt     <bl_saw
-hbl:    move    a1,n2
-        move    x:<S_ENVDAC,y0
-        move    x:(r2+n2),x0
-hblm:   mpy     x0,y0,a     b1,x:<S_BLCNT       ; x0 = DAC word, b1 = the countdown
+        jmp     <hbl
+hquiet:                                         ; plain waveform at envelope DAC zero
+        clr     a
         move    a1,x:<S_OUT
+        move    a1,x:<S_BLCNT            ; the first audible frame must reconsider its edge window
         jmp     <vbend
 hfloat:                                         ; no waveform: the last code floats until its TTL runs out
         move    y:S_TTL,b
-        tst     b
-        jne     hf_ttl
+        move    x:<G_N,x0
+        sub     x0,b
+        jle     hf_exp                          ; (then hfdone takes over)
+        move    b1,y:S_TTL
+hfdone:
 hf_go:  move    x:<S_WAVEOUT,a
         jmp     <hplain
 hnoise:
+        move    x:S_NEDGE,b             ; a noise edge at or below the phase: the register steps
+        cmp     b,a
+        jge     <hn_fast                ; (and comes back to hcode with the new noise output)
         move    y:<S_NOISE,a
 hcode:  move    a1,x:<S_WAVEOUT                 ; (the fast triangle, saw and pulse leave S_WAVEOUT to wave_refresh)
         jmp     <hplain
@@ -237,10 +250,15 @@ htri:                                           ; ((ix ^ (msb ? $7ff : 0)) & $7f
 ht_up:  and     x1,a
         move    a1,a                            ; (drop the fraction)
         asl     a
+; The band-limited and ordinary outputs share their final multiply and
+; fall through into the next voice. Non-BLEP handlers may overwrite BLCNT:
+; they never consume it, and every control write resets it before selecting
+; saw/pulse. This removes the extra return jump from every pulse/BLEP output.
+hbl:
 hplain: move    a1,n2
         move    x:<S_ENVDAC,y0
         move    x:(r2+n2),x0
-        mpy     x0,y0,a
+hblm:   mpy     x0,y0,a     b1,x:<S_BLCNT
         move    a1,x:<S_OUT
 vbend:
 ;@endvoice
@@ -249,7 +267,7 @@ vbend:
 ; The spec is mix_output() in src/ref/sid_ref.c; every step below is one line
 ; of it. States are 48-bit (Q24) in L memory, coefficients 24-bit words. The
 ; routing is a multiply by the weights in Y memory (no branches), the
-; coefficients stream through r7, and r4/r5/r6/r7 end balanced.
+; coefficients ride on the ALU instructions, and r4/r5/r6 end balanced.
 mix_frame:
         move    x:(r0)+n0,x0    y:(r4)+,y0      ; v0, mr0
         mpy     x0,y0,a         y:(r4)+,y1      ; md0
@@ -265,11 +283,11 @@ mix_frame:
         move    a1,b                            ; b = x << 24
         move    x:(r5)+,y0                      ; s1h
         move    l:(r5),a                        ; s2
-        sub     a,b             x:(r7)+,x0      ; h3 = x - s2; a1
+        sub     a,b             x:<F_A1,x0      ; h3 = x - s2; a1
         move    b1,y1                           ; v3h
-        mpy     x0,y0,a         x:(r7)+,x0      ; a = a1*s1h; a2
+        mpy     x0,y0,a         x:<F_A2,x0      ; a = a1*s1h; a2
         mac     x0,y1,a         l:(r5),b        ; v1 = + a2*v3h; b = s2
-        mac     x0,y0,b         x:(r7)+,x0      ; + a2*s1h; a3
+        mac     x0,y0,b         x:<F_A3,x0      ; + a2*s1h; a3
         mac     x0,y1,b         a1,y0           ; v2 = + a3*v3h; y0 = v1h
         move    b1,y1                           ; v2h
         asl     a
@@ -280,16 +298,16 @@ mix_frame:
         move    l:(r5),x
         sub     x,a
         move    a,l:(r5)                        ; s1 = 2*v1 - s1
-        move    x:(r7)+,x0                      ; hp = x - 4*k4*v1h - v2h
+        move    x:<F_K4,x0                      ; hp = x - 4*k4*v1h - v2h
         mpy     x0,y0,a         y:<T_X,b
         asl     a
         asl     a
-        sub     a,b             x:(r7)+,x0
-        sub     y1,b            y:<6,x1         ; (the word read above is reserved); mlp
+        sub     a,b
+        sub     y1,b            y:<6,x1         ; mlp
         mpy     x1,y1,a         y:<7,x1         ; v2h * mlp; mbp
         mac     x1,y0,a         y:<8,x1         ; + v1h * mbp; mhp
         move    b1,y0
-        mac     x1,y0,a         x:(r7)-n7,y0    ; + hph * mhp; fg
+        mac     x1,y0,a         x:<F_FG,y0      ; + hph * mhp; fg
         asl     a                               ; the selected outputs, summed
         move    a,x0                            ; t, through the limiter
         mpy     x0,y0,a
@@ -362,6 +380,9 @@ ml_cmd: movep   x:m_hrx,a
         move    #>DSP_CMD_LOAD_Y,x0
         cmp     x0,a
         jeq     cmd_load_y
+        move    #>DSP_CMD_LOAD_X_HI,x0
+        cmp     x0,a
+        jeq     cmd_load_hi
         move    #>DSP_CMD_CONFIG,x0
         cmp     x0,a
         jeq     cmd_config
@@ -418,6 +439,25 @@ cmd_load:                               ; address, count, words -> X memory
 load_done:
         jmp     reply_ok
 
+cmd_load_hi:                            ; address, count, words -> the upper twelve bits of the X words
+        jclr    #0,x:m_hsr,*
+        movep   x:m_hrx,x1
+        move    x1,r0
+        jclr    #0,x:m_hsr,*
+        movep   x:m_hrx,x1
+        move    #>$800,y0
+        move    #>$fff,y1
+        do      x1,load_hi_done
+        jclr    #0,x:m_hsr,*
+        movep   x:m_hrx,x0
+        mpy     x0,y0,b                 ; b0 = the word << 12
+        move    x:(r0),a
+        and     y1,a        b0,x0
+        or      x0,a
+        move    a1,x:(r0)+
+load_hi_done:
+        jmp     reply_ok
+
 cmd_load_y:                             ; address, count, words -> Y memory
         jclr    #0,x:m_hsr,*
         movep   x:m_hrx,x1
@@ -432,9 +472,9 @@ load_y_done:
 
 
 ; ------------------------------------------------------------- the SSI stream
-; The transmit interrupt plays a ring of 512 stereo frames; the command loop
+; The transmit interrupt plays a ring of 4096 frames; the command loop
 ; renders ahead of it whenever the host has nothing to say (stream_step),
-; until RING_TARGET words wait. Register writes arrive stamped with their SID
+; until RING_TARGET frames wait. Register writes arrive stamped with their SID
 ; cycle (mod 2^24), in order, with a horizon: the cycle up to which the host
 ; has delivered everything. A frame is rendered when its first cycle is below
 ; the horizon, and takes the queued writes below its last cycle + 1 first -
@@ -443,7 +483,8 @@ load_y_done:
 
 ssi_underrun:                           ; long interrupt: SSISR then TX clears TUE
         movep   x:m_sr,x:G_TUE+1
-        movep   x:(r3)+,x:m_tx
+        movep   x:(r3)+n3,x:m_tx
+        move    x:(r7)+,n3
         bset    #0,x:G_TUE
         rti
 
@@ -458,11 +499,18 @@ cmd_stream_start:
         rep     #$58-$46
         move    a,x:(r0)+               ; stream variables and status
         move    #>RING_BASE,r0
-        rep     #RING_WORDS
+        move    #>RING_WORDS,x0
+        rep     x0
         move    a,x:(r0)+
         move    #>RING_BASE,r3
         move    #>RING_WORDS-1,m3
-        move    r3,x:G_WP
+        move    #>1,x0                  ; the transmitter's steps: 0 (now), 1, 0, 1, ...
+        move    x0,x:G_STEP
+        move    a1,x:G_STEP+1
+        move    #>G_STEP,r7
+        move    #>1,m7
+        move    #0,n3
+        move    r3,n6
         move    #>FIFO_BASE,x0
         move    x0,x:G_FHEAD
         move    x0,x:G_FTAIL
@@ -609,21 +657,21 @@ stream_step:
         tst     a
         jle     main_loop
         move    r3,a                    ; the first frame goes just ahead of the transmitter
-        move    #>RING_BASE-2,x0
-        sub     x0,a
-        move    #>RING_WORDS-2,x0
-        and     x0,a
-        move    #>RING_BASE,x0
-        add     x0,a
-        move    a1,x:G_WP
-        move    #>1,x0
-        move    x0,x:G_STARTED
-ss_run: move    r3,x0                   ; the transmitter's position
-        move    x:G_WP,a
+        move    #>RING_BASE-1,x0
         sub     x0,a
         move    #>RING_WORDS-1,x0
         and     x0,a
-        move    a1,a                    ; words rendered ahead of it (the difference may have been negative)
+        move    #>RING_BASE,x0
+        add     x0,a
+        move    a1,n6
+        move    #>1,x0
+        move    x0,x:G_STARTED
+ss_run: move    r3,x0                   ; the transmitter's position
+        move    n6,a
+        sub     x0,a
+        move    #>RING_WORDS-1,x0
+        and     x0,a
+        move    a1,a                    ; frames rendered ahead of it (the difference may have been negative)
         move    x:G_PRIMED,b
         tst     b
         jeq     ss_tgt
@@ -640,23 +688,33 @@ ss_ok:  move    x:G_MINFILL,x0
         move    a1,x:G_MINFILL
 ss_tgt: move    a1,x:G_LAST
         move    #>RING_TARGET,b
-        sub     a,b                     ; room, in words
+        sub     a,b                     ; room, in frames
         jgt     ss_room
         move    #>1,x0
         move    x0,x:G_PRIMED
         jmp     main_loop
 ss_room:
-        move    x:G_WP,x0               ; frames in this run: the room, at most up to the ring's end
+        move    n6,x0               ; frames in this run: the room, at most up to the ring's end
         move    #>RING_BASE+RING_WORDS,a
         sub     x0,a
         cmp     a,b
         tgt     a,b
-        asr     b                       ; frames (an odd word of room is dropped)
-        move    b1,b
+        ; Bound the whole run by the released horizon. Every frame consumes
+        ; at most 21 SID cycles; positive tails below 21 allow one last frame,
+        ; exactly as the original per-frame G_HREM > 0 check did.
+        move    x:<G_HREM,a
+        tst     a
+        jle     main_loop
+        move    a1,x0
+        move    #>399457,y0             ; floor(2^23 / 21): conservatively floor(horizon / 21)
+        mpy     x0,y0,a
+        move    #>1,x0
+        cmp     x0,a
+        tlt     x0,a
+        cmp     a,b
+        tgt     a,b
         move    b1,x0
-        tst     b
-        jeq     main_loop
-        asl     b           x:G_LAST,a
+        move    x:G_LAST,a
         add     b,a
         move    a1,x:G_LAST
         move    x:G_PLAIN,a
@@ -664,9 +722,6 @@ ss_room:
         jne     ss_plain
         do      x0,ss_end
         jset    #0,x:m_hsr,ss_break     ; the host calls
-        move    x:<G_HREM,a
-        tst     a
-        jle     ss_break                ; the host has not released the next frame
         jsr     <frame
         move    x:G_SUM,x1              ; checksum = 3 * checksum + chip + voices (mod 2^24)
         move    x1,a
@@ -678,12 +733,12 @@ ss_room:
         add     y0,a
         move    a1,x:G_SUM
         move    #>$80,y0                ; the chip output, 16 bits, at the top of the SSI word: << 8 across
-        mpy     x0,y0,a     x:G_WP,r1   ; a1:a0, then through the limiter
+        mpy     x0,y0,a
+        move    n6,r1   ; a1:a0, then through the limiter
         move    a1,b2
         move    a0,b1
-        move    b,x:(r1)+               ; left and right
-        move    b,x:(r1)+
-        move    r1,x:G_WP
+        move    b,x:(r1)+               ; (the transmitter sends it as left and right)
+        move    r1,n6
         move    x:<G_HREM,a
         move    x:<G_N,x0
         sub     x0,a
@@ -693,18 +748,15 @@ ss_end:
 ss_plain:                               ; the same run without the checksum
         do      x0,ss_pend
         jset    #0,x:m_hsr,ss_break
-        move    x:<G_HREM,a
-        tst     a
-        jle     ss_break
         jsr     <frame
         move    y:<T_OUT,x0
         move    #>$80,y0
-        mpy     x0,y0,a     x:G_WP,r1
+        mpy     x0,y0,a
+        move    n6,r1
         move    a1,b2
         move    a0,b1
         move    b,x:(r1)+
-        move    b,x:(r1)+
-        move    r1,x:G_WP
+        move    r1,n6
         move    x:<G_HREM,a
         move    x:<G_N,x0
         sub     x0,a
@@ -714,7 +766,7 @@ ss_pend:
 ss_break:
         dc      $00008c                 ; enddo (written as data: the assembler wants it inside the loop's text)
         move    r3,x0                   ; the run ended early: what is ahead now
-        move    x:G_WP,a
+        move    n6,a
         sub     x0,a
         move    #>RING_WORDS-1,x0
         and     x0,a
@@ -731,12 +783,12 @@ ss_break:
         move    b1,x:G_UNDER
 ss_bok: move    a1,x:G_LAST
 ss_wrap:
-        move    x:G_WP,a                ; the write pointer wraps at the ring's end
+        move    n6,a                ; the write pointer wraps at the ring's end
         move    #>RING_BASE+RING_WORDS,x0
         cmp     x0,a
         jne     main_loop
         move    #>RING_BASE,x0
-        move    x0,x:G_WP
+        move    x0,n6
         jmp     main_loop
 
 ; ============================================================================
@@ -768,10 +820,7 @@ bl_corr:
         jpl     <bc_abs
         neg     a
         move    #>1,y1
-bc_abs: move    x0,b
-        tst     b
-        jeq     <bc_zero                ; frequency 0
-        move    #>$1000,y0
+bc_abs: move    #>$1000,y0        ; D = 0 also rejects here: distance >= 0
         mpy     x0,y0,b                 ; 2 * D << 12: two frames
         cmp     b,a
         jge     <bc_zero
@@ -813,39 +862,59 @@ bc_zero:
         clr     a
         rts
 
-; a = phase distance (48-bit, positive) to the next edge ahead, x0 = D -> b1 = the countdown: frames
-; that are certainly outside that edge's window, times $fff. After K frames the sample instant
-; has moved by at most K * 21 * freq + freq, and 21 * freq <= 1.048 * (D + 1): with the window's
-; two frames and a quarter in hand, K = floor(15/16 * (distance - 2.25 D) / D) is safe for D >= 64.
+; The same correction for a caller that has made bc_abs's test itself and
+; knows the sign (blp_fast): a = the distance, 0 <= a < 2 * D << 12, x0 = D
+; -> a = the correction's magnitude. Three shifts and 24 quotient bits are the
+; same quotient as bc_abs's eleven and sixteen, with nothing above it in a0.
+; Clobbers b, x, y, r1, n1.
+bc_hit: rep     #3
+        asl     a
+        and     #$fe,ccr
+        rep     #24
+        div     x0,a                    ; a0 = pos
+        move    a0,x1
+        move    #>$8000,y0
+        mpy     x1,y0,a                 ; a1 = table index, a0 = fraction << 16
+        move    #DSP_Y_BLEP,r1
+        move    a1,n1
+        move    a0,a
+        lsr     a
+        lua     (r1)+n1,r1
+        move    a1,y0                   ; fraction << 15
+        move    y:(r1)+,x0
+        move    y:(r1),a
+        sub     x0,a
+        move    a1,x1
+        mpy     x1,y0,a
+        add     x0,a                    ; the step residual, interpolated
+        move    a1,x0
+        move    x:G_JUMPW,y0
+        mpy     x0,y0,a
+        move    a1,a
+        rts
+
+; a = positive 48-bit phase distance to the next edge, x0 = D,
+; y0 = min($7fffff, floor(4096 * 2^23 / (21 * freq))). Discarding the
+; phase fraction and rounding the reciprocal down makes q <= distance /
+; (21*freq), in oscillator phase units. K = max(0, q-2) is safe because
+; K*21*freq + freq + 2*D <= distance: 2*D + freq < 42*freq.
+; Thus every skipped sample stays outside the unchanged two-frame BLEP
+; window, including the sample-instant jitter. Register writes and sync
+; still invalidate the countdown. b1 returns K*$fff, capped at 2047 frames.
 bl_frames:
         move    x0,b
-        move    #>64,x1
-        cmp     x1,b
-        jlt     <bf_zero                ; (near-zero frequencies: every frame takes the long way)
-        move    #>$1200,y0
-        mpy     x0,y0,b                 ; 2.25 * D << 12
-        sub     b,a
-        jle     <bf_zero
-        move    a1,b
-        cmp     x0,b
-        jge     <bf_max                 ; more than 4095 frames
-        and     #$fe,ccr
-        rep     #13
-        div     x0,a                    ; frames = distance / D
-        move    a0,a
-        move    #>$1fff,x1
-        and     x1,a
+        tst     b
+        jeq     <bf_max
         move    a1,x1
-        move    #>$080000,y0
-        mpy     x1,y0,b                 ; / 16
-        sub     b,a
-        move    a1,a
-        tst     a
+        mpy     x1,y0,b
+        move    b1,b
+        move    #>2,x1
+        sub     x1,b
         jle     <bf_zero
         move    #>2047,x1
-        cmp     x1,a
-        tgt     x1,a
-        move    a1,x1
+        cmp     x1,b
+        tgt     x1,b
+        move    b1,x1
         move    #>$fff,y0
         mpy     x1,y0,b
         asr     b
@@ -857,39 +926,47 @@ bf_zero:
 bf_max: move    #>BL_MAXCNT,b
         rts
 
+; x0 = frequency -> b1 = countdown reciprocal. Called only on a frequency
+; change; y1 (the written register byte) is preserved. The division is paid
+; here once, rather than every time an oscillator leaves an edge window.
+bl_recip:
+        move    #>21,y0
+        mpy     x0,y0,b
+        asr     b
+        move    b0,x0
+        move    x0,b
+        move    #>4096,x1
+        cmp     x1,b
+        jle     <br_cap
+        move    x1,a
+        and     #$fe,ccr
+        rep     #24
+        div     x0,a
+        move    a0,b
+        rts
+br_cap: move    #>$7fffff,b
+        rts
+
 ;@voice
 ; ---------------------------------------------------------------- oscillator
 ; The phase is the 48-bit word L:S_ACC = acc << 12: X = ix (acc >> 12, the
 ; waveform index), Y = the low twelve bits << 12. S_THR is the smallest ix at
-; which a frame has more to do than add: the next rising edge of acc bit 19
-; (ix = $80 mod $100; the noise register steps on each, which is reSID's
-; shift-period loop), ix = $800 while the msb is clear (S_MSB, for hard sync)
-; or the wrap at $1000. Zero forces a visit: the clock after the msb rose
-; clears S_MSB again (bit 0: msb_rising; bit 1: a hard sync latched the pulse
-; output, see sync_reset).
+; which a frame has more to do than add: ix = $800 while the msb is clear
+; (S_MSB, for hard sync) or the wrap at $1000. Zero forces a visit: the clock
+; after the msb rose clears S_MSB again (bit 0: msb_rising; bit 1: a hard sync
+; latched the pulse output, see sync_reset).
+;
+; The noise register steps on each rising edge of acc bit 19 (ix = $80 mod
+; $100, reSID's shift-period loop). The edges are not events of their own:
+; S_NEDGE is the first one not yet applied, and whoever needs the register
+; applies those the phase has passed. With the noise bit on that is the
+; output handler, every frame (hnoise, hgen); with it off nothing reads the
+; register, and oscs takes them eight at a time. A control write, a hard
+; sync restart and the 6581's msb clear apply the rest first (noise_flush).
 
 ; The frame's out-of-line side: a = the new phase, not yet wrapped (S_ACC still
 ; holds the old one), x1 = S_THR <= a1. Returns a = the phase to store.
 oscs:
-        jclr    #7,x1,os_gen            ; not a noise edge
-        move    #>$80,x0
-        tfr     x1,b
-        add     x0,b                    ; S_THR + $80
-        cmp     b,a
-        jge     <os_gen                  ; something else is reached too
-        move    a,l:<S_ACC              ; a single noise step, no wrap
-        tfr     b,a         y:<K_7FF,x1
-        and     x1,a                    ; the next threshold is the next edge, or the msb / the wrap before it
-        jeq     <os_cap
-        add     x0,b
-os_cap: move    b1,x:<S_THR
-        jsr     <shift
-        move    l:<S_ACC,a
-        move    l:<G_N,y
-        rts
-
-; The general case: msb edge, every noise edge in (old, new], the wrap, S_THR.
-os_gen:
         move    x:<S_ACC,b              ; the old ix
         move    a,l:<S_ACC
         move    #>$800,x0               ; msb_rising: clear before, set after
@@ -900,64 +977,187 @@ os_gen:
         jlt     <og_msb
         move    #>1,x1
 og_msb: move    x1,x:<S_MSB
-        move    #>$80,x0                ; the first noise edge above the old phase: ((ix + $80) & $1f00) + $80
-        add     x0,b
-        move    #>$1f00,x1
-        and     x1,b
-        add     x0,b
-og_loop:
-        cmp     b,a
-        jlt     <og_wrap
-        move    b1,y:S_TMPE
-        jsr     <shift
-        move    y:S_TMPE,b
-        move    #>$100,x0
-        add     x0,b
-        jmp     <og_loop
-og_wrap:
-        move    #>$1000,x0
-        cmp     x0,a
-        jlt     <og_thr
-        sub     x0,a
-        sub     x0,b
-        move    a1,x:<S_ACC
-og_thr: jclr    #0,x:<S_MSB,og_min
-        clr     b                       ; the msb rose: come back next frame
-        jmp     <og_store
-og_min: move    #>$800,x0               ; the edge, or the msb toggle / the wrap before it
-        cmp     x0,a
-        jlt     <og_cap
-        move    #>$1000,x0
-og_cap: cmp     x0,b
-        tgt     x0,b
+        jmp     <og_lazy
 og_store:
         move    b1,x:<S_THR
         move    l:<G_N,y
         rts
 
+; The noise bit is off: nothing reads the register until the next control
+; write, and the noise edges passed since the last visit are applied here,
+; eight at a time (a visit adds eight, between two toggles):
+; sr = (sr << 8) | (((sr >> 15) ^ (sr >> 10)) & $ff) is eight single shifts.
+; Up to seven stay pending below the phase, so S_NEDGE may be negative after a wrap.
+og_lazy:
+        move    x:S_NEDGE,b
+        jset    #3,x:<S_WAVEFORM,og_lzw ; (the noise bit is on: the output handler applies them every frame)
+og_lz8: move    #>$700,x0
+        add     x0,b                    ; the eighth edge from there
+        cmp     b,a
+        jlt     <og_lz1                 ; fewer than eight wait: they stay (noise_flush takes single ones)
+        move    #>$100,x0
+        add     x0,b
+        move    b1,x:S_NEDGE
+        move    y:<S_SR,x0
+        move    #>$100,y0
+        mpy     x0,y0,b                 ; b1 = sr >> 15
+        move    b1,x1
+        move    #>$2000,y0
+        mpy     x0,y0,b                 ; b1 = sr >> 10
+        eor     x1,b
+        move    #>$ff,x1
+        and     x1,b
+        move    b1,x1                   ; the eight new bits
+        move    #>$80,y0
+        mpy     x0,y0,b                 ; b0 = sr << 8
+        move    b0,b
+        or      x1,b
+        move    #>$7fffff,x1
+        and     x1,b
+        move    b1,y:<S_SR
+        move    x:S_NEDGE,b
+        jmp     <og_lz8
+og_lz1: sub     x0,b
+og_lzw: move    #>$1000,x0
+        cmp     x0,a
+        jlt     <og_lzs
+        sub     x0,a
+        sub     x0,b
+        move    a1,x:<S_ACC
+og_lzs: move    b1,x:S_NEDGE
+        clr     b
+        jset    #0,x:<S_MSB,og_store    ; the msb rose: come back next frame
+        move    #>$800,x0
+        move    #>$1000,b
+        cmp     x0,a
+        tlt     x0,b
+        jmp     <og_store
+
+; Apply the noise edges the phase has passed, before anything reads the
+; register or moves the phase (shift keeps the noise output current while the
+; noise bit is on). Preserves y.
+noise_flush:
+        move    l:<S_ACC,a
+        move    x:S_NEDGE,b
+nf_loop:
+        cmp     b,a
+        jlt     <nf_done
+        move    b1,y:S_TMPE
+        jsr     <shift
+        move    y:S_TMPE,b
+        move    #>$100,x0
+        add     x0,b
+        jmp     <nf_loop
+nf_done:
+        move    b1,x:S_NEDGE
+        rts
+
+; hnoise's own way there, for the one or two edges a frame can pass: a = the
+; phase, b = S_NEDGE <= a. Straight-line steps (shift, without its gather), the
+; gather into a, and on to hcode. More than two edges (the first frame after
+; a silent stretch) take hn_step.
+hn_fast:
+        move    #>$100,x0
+        add     x0,b
+        cmp     b,a
+        jge     <hn_two
+        move    b1,x:S_NEDGE
+        move    y:<S_SR,b
+hn_one:
+        asl     b
+        jclr    #18,b1,hn1a
+        bchg    #23,b1
+hn1a:  jclr    #23,b1,hn1b
+        bclr    #23,b1
+        bset    #0,b1
+hn1b:
+        move    b1,x0
+        clr     a           b1,y:<S_SR
+        btst    #20,x0
+        rol     a
+        btst    #18,x0
+        rol     a
+        btst    #14,x0
+        rol     a
+        btst    #11,x0
+        rol     a
+        btst    #9,x0
+        rol     a
+        btst    #5,x0
+        rol     a
+        btst    #2,x0
+        rol     a
+        btst    #0,x0
+        rol     a
+        lsl     a
+        lsl     a
+        lsl     a
+        lsl     a
+        move    a1,y:<S_NOISE
+        jmp     <hcode
+hn_two: add     x0,b
+        cmp     b,a
+        jge     <hn_many
+        move    b1,x:S_NEDGE
+        move    y:<S_SR,b
+        asl     b
+        jclr    #18,b1,hn2a
+        bchg    #23,b1
+hn2a:  jclr    #23,b1,hn2b
+        bclr    #23,b1
+        bset    #0,b1
+hn2b:
+        jmp     <hn_one
+hn_many:
+        move    x:S_NEDGE,b
+        jsr     <hn_step
+        move    y:<S_NOISE,a
+        jmp     <hcode
+
+; The same for the output handlers of a voice with the noise bit on (hnoise,
+; hgen): a = the phase, b = S_NEDGE <= a. The edges are counted, the register
+; takes that many steps and the noise output is gathered once. Preserves y1.
+hn_step:
+        move    #0,r1
+        move    #>$100,x0
+hn_cnt: add     x0,b        (r1)+
+        cmp     b,a
+        jge     <hn_cnt
+        move    b1,x:S_NEDGE
+        move    y:<S_SR,b
+        do      r1,hn_end
+        asl     b                       ; (shift, without the gather)
+        jclr    #18,b1,hn_a
+        bchg    #23,b1
+hn_a:   jclr    #23,b1,hn_b
+        bclr    #23,b1
+        bset    #0,b1
+hn_b:   move    b1,y:<S_SR
+hn_end:
+        jmp     <set_noise_output
+
 ; S_THR for a phase a register write changed
 thr_update:
-        jset    #3,x:<S_TEST,thu_calc   ; (under the test bit the phase is held and S_MSB keeps its value)
-        move    x:<S_MSB,a
-        tst     a
-        jeq     <thu_calc
-        clr     a                       ; the next clock has S_MSB to clear
-        move    a1,x:<S_THR
-        rts
-thu_calc:
         move    x:<S_ACC,a
         move    #>$80,x0
         add     x0,a
         move    #>$1f00,x1
         and     x1,a
         add     x0,a                    ; the next noise edge
+        move    a1,x:S_NEDGE            ; (the caller has applied the ones before it: noise_flush)
+        jset    #3,x:<S_TEST,thu_calc   ; (under the test bit the phase is held and S_MSB keeps its value)
+        move    x:<S_MSB,b
+        tst     b
+        jeq     <thu_calc
+        clr     a                       ; the next clock has S_MSB to clear
+        move    a1,x:<S_THR
+        rts
+thu_calc:
         move    x:<S_ACC,b
         move    #>$800,x0
         and     x0,b
         add     x0,b                    ; the msb toggle or the wrap
-        cmp     b,a
-        tgt     b,a
-        move    a1,x:<S_THR
+        move    b1,x:<S_THR             ; (the noise edges are not events: og_lazy, noise_flush)
         rts
 
 ; noise_output: the eight scattered register bits 20,18,14,11,9,5,2,0 gathered
@@ -965,38 +1165,26 @@ thu_calc:
 set_noise_output:
         move    y:<S_SR,x0
         clr     b
-        jclr    #20,x0,sn_1
-        move    #>$800,y0
-        or      y0,b
-sn_1:
-        jclr    #18,x0,sn_2
-        move    #>$400,y0
-        or      y0,b
-sn_2:
-        jclr    #14,x0,sn_3
-        move    #>$200,y0
-        or      y0,b
-sn_3:
-        jclr    #11,x0,sn_4
-        move    #>$100,y0
-        or      y0,b
-sn_4:
-        jclr    #9,x0,sn_5
-        move    #>$80,y0
-        or      y0,b
-sn_5:
-        jclr    #5,x0,sn_6
-        move    #>$40,y0
-        or      y0,b
-sn_6:
-        jclr    #2,x0,sn_7
-        move    #>$20,y0
-        or      y0,b
-sn_7:
-        jclr    #0,x0,sn_8
-        move    #>$10,y0
-        or      y0,b
-sn_8:
+        btst    #20,x0
+        rol     b
+        btst    #18,x0
+        rol     b
+        btst    #14,x0
+        rol     b
+        btst    #11,x0
+        rol     b
+        btst    #9,x0
+        rol     b
+        btst    #5,x0
+        rol     b
+        btst    #2,x0
+        rol     b
+        btst    #0,x0
+        rol     b
+        lsl     b
+        lsl     b
+        lsl     b
+        lsl     b
         move    b1,y:<S_NOISE
         rts
 
@@ -1018,6 +1206,11 @@ sh_b:   move    b1,y:<S_SR
 ; ---- phase B, the general output handlers (reSID's set_waveform_output(delta_t)
 ; through the tables)
 hgen:                                   ; combined waveforms, ring-modulated triangle
+        jclr    #3,x:<S_WAVEFORM,hg_nc
+        move    x:S_NEDGE,b
+        cmp     b,a
+        jsge    <hn_step
+hg_nc:
         move    y:S_WJ,r1
         move    x:<S_ACC,a
         jclr    #0,x:<S_RING,hg_go      ; ring modulation flips the index msb while the source's msb is clear
@@ -1048,7 +1241,7 @@ htest:                                  ; the test bit: the phase is held, the p
         jsr     test_clock
         move    x:<S_WAVEFORM,a
         tst     a
-        jeq     <hfloat
+        jeq     hft
         move    y:S_WJ,r1
         move    x:<S_ACC,a
         jclr    #0,x:<S_RING,ht_go
@@ -1064,8 +1257,7 @@ bl_saw:
         move    a,l:G_BLPH
         move    x:(r2+n2),x0            ; the DAC word of the code
         move    x0,x:G_BLDAC
-        clr     b
-        move    b1,x:<G_BLHIT
+        bclr    #0,x:<G_BLHIT
         move    y:S_BLD,x0
         jsr     bl_wrap                 ; the falling edge at the wrap
         move    x:G_BLDAC,b
@@ -1077,6 +1269,7 @@ bl_saw:
         move    l:G_BLPH,b
         sub     b,a
         move    y:S_BLD,x0
+        move    x:S_BLREC,y0
         jsr     bl_frames
 bl_done:
         move    x:G_BLDAC,x0
@@ -1085,13 +1278,14 @@ bl_done:
         jmp     <hblm
 
 bl_pulse:                               ; (x0 = pw)
+        jset    #@V@+1,x:<G_BLHIT,blp_fast
+blp_old:
         move    a,l:G_BLPH
         move    #0,n2
         cmp     x0,a
         jlt     blp_c
         move    x1,n2
-blp_c:  clr     b
-        move    b1,x:<G_BLHIT
+blp_c:  bclr    #0,x:<G_BLHIT
         move    x:(r2+n2),x0
         move    x0,x:G_BLDAC
         move    x:<S_PW,a               ; pulse width 0: always high, no edges
@@ -1139,19 +1333,122 @@ blp_g:  move    #>$1000,x0
         cmp     b,a
         tgt     b,a
         move    y:S_BLD,x0
+        move    x:S_BLREC,y0
         jsr     bl_frames
         jmp     bl_done
 
+; The same for a pulse whose two edges are further apart than their windows
+; (bl_sep): at most one edge is near, and the level says which two to look at.
+; High: the rising edge behind (phase - pw) or the wrap ahead ($1000 - phase),
+; the DAC word of $fff plus the correction. Low: the rising edge ahead or the
+; wrap behind, the word of 0 less the correction. S_BLWC is above two frames'
+; phase, so a distance at or beyond it is outside; inside, bc_abs's test
+; decides, bc_hit makes the correction, and the rare frame the test rejects
+; goes the long way.
+blp_fast:
+        move    a,l:G_BLPH
+        move    x1,n2
+        sub     x0,a        x:S_BLWC,x1
+        jmi     <blp_fl
+        cmp     x1,a
+        jlt     <blp_fhh
+        move    #>$1000,a
+        move    l:G_BLPH,b
+        sub     b,a
+        cmp     x1,a
+        jge     <blp_fhm
+blp_fhh:
+        move    y:S_BLD,x0
+        move    #>$1000,y0              ; bc_abs's test: within two frames (D = 0 is not)
+        mpy     x0,y0,b
+        cmp     b,a
+        jge     blp_slow
+        jsr     <bc_hit
+        move    x:(r2+n2),x0
+        add     x0,a        x:<G_EPS13,y1
+        move    a1,x0
+        clr     b           x:<S_ENVDAC,y0
+        jmp     <hblm
+blp_fhm:
+        move    y:S_BLD,x0
+        move    x:S_BLREC,y0
+        jsr     <bl_frames
+        move    x:(r2+n2),x0
+        move    x:<G_EPS13,y1
+        move    x:<S_ENVDAC,y0
+        jmp     <hblm
+blp_fl: neg     a
+        cmp     x1,a
+        jlt     <blp_fll
+        move    l:G_BLPH,b
+        cmp     x1,b
+        jge     <blp_flm
+        tfr     b,a
+blp_fll:
+        move    y:S_BLD,x0
+        move    #>$1000,y0
+        mpy     x0,y0,b
+        cmp     b,a
+        jge     blp_slow
+        jsr     <bc_hit
+        move    x:(r2),b
+        sub     a,b         x:<G_EPS13,y1
+        move    b1,x0
+        clr     b           x:<S_ENVDAC,y0
+        jmp     <hblm
+blp_flm:
+        move    y:S_BLD,x0
+        move    x:S_BLREC,y0
+        jsr     <bl_frames
+        move    x:(r2),x0
+        move    x:<G_EPS13,y1
+        move    x:<S_ENVDAC,y0
+        jmp     <hblm
+blp_slow:
+        move    l:G_BLPH,a
+        move    x:<S_PW,x0
+        move    y:<K_FFF,x1
+        jmp     blp_old
+
+; S_BLWC = (D >> 11) + 1, in waveform index units: more than the two frames'
+; phase (2 * D << 12) bl_corr looks at. The voice's bit in G_BLHIT says that
+; 2 * S_BLWC < pw < $1000 - 2 * S_BLWC: the two edges' windows are apart, with
+; room for S_BLWC's rounding. Called when the frequency or the pulse width
+; changes; preserves y1.
+bl_sep:
+        move    y:S_BLD,x0
+        move    #>$1000,y0
+        mpy     x0,y0,b
+        move    b1,b
+        move    #>1,x0
+        add     x0,b
+        move    b1,x:S_BLWC
+        asl     b
+        bclr    #@V@+1,x:<G_BLHIT
+        move    x:<S_PW,a
+        cmp     b,a
+        jle     <bls_no
+        add     a,b
+        move    #>$1000,x0
+        cmp     x0,b
+        jge     <bls_no
+        bset    #@V@+1,x:<G_BLHIT
+bls_no: rts
+
 ; the table routines: a1 = ix -> a1 = the waveform code before the pulse and noise masks
-wt_t7:  move    a1,n1
+wt_t7:  move    a1,n1                   ; (tables 6 and 7 share their words: 7 is the upper twelve bits)
         move    #>DSP_X_WAVE7,r1
-        nop
-        move    x:(r1+n1),a
+        move    #>$800,x1
+        move    x:(r1+n1),x0
+        mpy     x0,x1,a                 ; a1 = the word >> 12, sign-extended
+        move    #>$fff,x0
+        and     x0,a
         rts
 wt_t6:  move    a1,n1
         move    #>DSP_X_WAVE6,r1
-        nop
+        move    #>$fff,x0
         move    x:(r1+n1),a
+        and     x0,a
         rts
 wt_t5:  move    a1,n1
         move    #>DSP_Y_WAVE5,r1
@@ -1285,6 +1582,7 @@ es_zero:                                ; zero: period 1, frozen until the next 
         move    x0,y:<S_HOLD
         move    #>eh_hold,x0
         move    x0,y:<S_EH
+        jsr     output_handler
         jmp     <ed_next
 
 eh_pipe:                                ; the gate changed: b = -n, the counter is in S_RATECNT
@@ -1293,6 +1591,8 @@ eh_pipe:                                ; the gate changed: b = -n, the counter 
         jne     <ep_rel
         move    a1,y:<S_STATE           ; attack
         move    a1,y:<S_HOLD
+        move    y:S_BASEWH,x0           ; attack may make a previously silent voice audible
+        move    x0,x:<S_WH
         move    y:S_ATTACK,a
         jmp     <ep_rate
 ep_rel: move    #>ST_RELEASE,x0
@@ -1505,6 +1805,8 @@ cmd_write:                              ; reg, value
 ; returns through G_WRET. Registers 32-39 are not the SID's: they carry the
 ; filter coefficient words in the write queue.
 write_dispatch:
+        clr     b                       ; (the sync frames look again: fr_sync)
+        move    b1,x:G_SCNT
         move    x1,a
         move    #>31,x0
         cmp     x0,a
@@ -1647,6 +1949,66 @@ um_routed:
 ; at every msb toggle of a sync source (reSID SID::clock(delta_t)), so that a
 ; restart lands on its cycle. Most frames have no toggle and are one step.
 fr_sync:
+        ; G_SCNT: cycles in which no active sync source's msb can toggle
+        ; (set below, cleared by every register write and every phase change
+        ; outside the oscillator's own clock). While it lasts the frame is
+        ; the ordinary one.
+        move    x:G_SCNT,b
+        sub     y1,b
+        jlt     <fsy_chk
+        move    b1,x:G_SCNT
+        jmp     <fr_phase_a
+fsy_chk:
+        ; Without an MSB toggle of any active sync source, clocking all
+        ; voices in one step is identical to the split loop. Predict only
+        ; those sources; retain the original loop at every possible toggle.
+;@voice
+        jclr    #1,x:<DST_SYNC,fsg_next
+        move    x:<S_FREQE,x0
+        move    l:<S_ACC,a
+        mac     y0,x0,a     x:<S_ACC,x1
+        move    a1,b
+        eor     x1,b
+        ; At most 21*65535 phase units: less than one half-period.
+        ; A changed bit 11 therefore detects every possible MSB toggle,
+        ; including the wrap, without constructing the next threshold.
+        jset    #11,b1,fr_sync_split
+fsg_next:
+;@endvoice
+        ; No toggle in this frame. A source's toggle lies ceil(delta / freq)
+        ; cycles ahead, delta being its phase distance to ix $800 or $1000.
+        ; With d = that distance in whole ix less one (below delta) and
+        ; S_BLREC <= 4096 * 2^23 / (21 * freq), 21 * ((d * S_BLREC) >> 23) is
+        ; below delta / freq: for that many cycles the frames need no look.
+        move    #>2047,b
+;@voice
+        jclr    #1,x:<DST_SYNC,fsb_next
+        move    x:<S_ACC,x1
+        move    #>$800,x0
+        move    x1,a
+        and     x0,a
+        add     x0,a
+        sub     x1,a        x:S_BLREC,y0
+        move    #>1,x0
+        sub     x0,a
+        move    a1,x1
+        mpy     x1,y0,a
+        move    a1,a
+        cmp     a,b
+        tgt     a,b
+fsb_next:
+;@endvoice
+        move    b1,x1
+        move    #>21,y0
+        mpy     x1,y0,b     x:<G_N,x0
+        asr     b
+        move    b0,b
+        sub     x0,b        l:<G_N,y    ; (this frame is one of them)
+        move    b1,x:G_SCNT
+        jmp     <fr_phase_a
+fr_sync_split:
+        clr     b
+        move    b1,x:G_SCNT
 ;@voice
         move    x:<S_REM,b
         sub     y1,b
@@ -1659,8 +2021,8 @@ fr_sync:
         move    a1,y:<G_PRE
         move    x:<G_N,a
 fr_osc_loop:                            ; a1 = cycles left
-        move    a1,x:G_DTOSC
-        move    a1,x:G_DTMIN
+        move    a1,x:G_SLEFT
+        move    a1,y:<G_DTMIN
         move    y:<G_PRE,y0
 ;@voice
         jclr    #1,x:<DST_SYNC,sck_no   ; a sync source: can its msb toggle before the last cycle? S_THR is
@@ -1673,7 +2035,7 @@ fr_osc_loop:                            ; a1 = cycles left
         move    y:<G_PRE,y0
 sck_no:
 ;@endvoice
-        move    x:G_DTMIN,x0           ; the step's cycles << 11, the oscillators' multiplier
+        move    y:<G_DTMIN,x0           ; the step's cycles << 11, the oscillators' multiplier
         move    #>$400,y0
         mpy     x0,y0,a     y:<G_PRE,b
         move    a0,y:<G_DT11
@@ -1697,8 +2059,8 @@ sck_no:
 sy_do:  jsr     sync_reset
 sy_done:
 ;@endvoice
-        move    x:G_DTOSC,a
-        move    x:G_DTMIN,x0
+        move    x:G_SLEFT,a
+        move    y:<G_DTMIN,x0
         sub     x0,a
         jne     fr_osc_loop
         jmp     fr_b
@@ -1754,13 +2116,11 @@ reset_state:                            ; the model's power-on state
         move    #0,r4                   ; the pointers the frame keeps balanced
         move    #>F_S1,r5
         move    #>F_XL,r6
-        move    #F_A1,r7
         move    #>HSIZE,n0
         move    #>WREM_IDLE,x0
         move    x0,x:<G_WREM
         move    #>5,n4
         move    #>1,n5
-        move    #>5,n7
         move    #>DSP_X_WAVE_DAC,r2
         jsr     update_masks
         jsr     reset_voice_0
@@ -1813,6 +2173,9 @@ wr_freq_hi:
         move    b1,x0
         or      x0,a
 wr_freq_set:
+        move    y:S_FREQ,x0
+        cmp     x0,a
+        jeq     wr_done                 ; preserve the edge countdown on an unchanged frequency
         move    a1,y:S_FREQ
         move    a1,x0                   ; D = freq * cycles per frame, for the band-limiting
         move    #>BL_CYC16,y0
@@ -1820,10 +2183,14 @@ wr_freq_set:
         rep     #7
         asl     b
         move    b1,y:S_BLD
+        jsr     bl_recip
+        move    b1,x:S_BLREC
+        jsr     bl_sep
         clr     b
         move    b1,x:<S_BLCNT
         jset    #3,x:<S_TEST,wr_done   ; the test bit holds the oscillator
-        move    a1,x:<S_FREQE
+        move    y:S_FREQ,x0
+        move    x0,x:<S_FREQE
         jmp     wr_done
 
 wr_pw_lo:
@@ -1833,9 +2200,14 @@ wr_pw_lo:
         and     x0,a
         move    y1,x0
         or      x0,a
+        move    x:<S_PW,x0
+        cmp     x0,a
+        jeq     wr_pw_same
         move    a1,x:<S_PW
         clr     b
         move    b1,x:<S_BLCNT
+wr_pw_same:
+        jsr     bl_sep
         jsr     calc_pulse_out
         jmp     wr_done
 
@@ -1851,11 +2223,13 @@ wr_pw_hi:
         and     x0,b
         move    b1,x0
         or      x0,a
+        move    x:<S_PW,x0
+        cmp     x0,a
+        jeq     wr_pw_same
         move    a1,x:<S_PW
         clr     b
         move    b1,x:<S_BLCNT
-        jsr     calc_pulse_out
-        jmp     wr_done
+        jmp     wr_pw_same
 
 wr_ad:
         move    y1,a
@@ -1910,7 +2284,8 @@ wr_sr:
 
 ; WaveformGenerator::writeCONTROL_REG, then EnvelopeGenerator's
 wr_control:
-        jset    #3,x:<S_WAVEFORM,wc_nfresh      ; the frame keeps the noise output current only while
+        jsr     noise_flush                     ; the noise edges the phase has passed
+        jset    #3,x:<S_WAVEFORM,wc_nfresh      ; the noise output is kept current only while
         jsr     set_noise_output                ; the noise bit is on,
 wc_nfresh:
         jset    #3,x:<S_TEST,wc_pfresh          ; and the pulse output only under the test bit
@@ -2033,11 +2408,14 @@ wc_pipe:
 reset_voice:                            ; the voice's power-on state (its variables are already zero)
         move    #>hfloat,x0
         move    x0,x:<S_WH
+        move    x0,y:S_BASEWH
         move    #>$555,x0               ; phase $555555
         move    x0,x:<S_ACC
         move    #>$555000,x0
         move    x0,y:<S_ACCF
         move    #>$580,x0
+        move    x0,x:S_NEDGE
+        move    #>$800,x0               ; (no waveform: the noise edges are applied at the toggles)
         move    x0,x:<S_THR
         move    #>$fff,x0
         move    x0,y:S_PULSE
@@ -2067,7 +2445,7 @@ env_refresh:                            ; S_ENVDAC from the table
         nop
         move    x:(r1),x0
         move    x0,x:<S_ENVDAC
-        rts
+        jmp     output_handler
 
 ; the output routines for the current waveform, ring and test bits: S_WH (the
 ; frame's handler), S_WJ (wave_core's table routine) and S_WF (wave_post's flags)
@@ -2156,6 +2534,31 @@ sh_saw:
 sh_pulse:
         move    #>hpulse,x0
 sh_store:
+        move    x0,y:S_BASEWH
+output_handler:
+        ; Only the stateless plain handlers can skip DAC/BLEP evaluation.
+        ; Envelopes, oscillators, noise, sync and waveform side effects keep
+        ; running; combined waveforms, test and floating outputs use their
+        ; original handlers even at zero envelope.
+        move    y:S_BASEWH,x0
+        move    x:<S_ENVDAC,a
+        tst     a
+        jne     oh_store
+        move    #>hpulse,a
+        cmp     x0,a
+        jeq     oh_quiet
+        move    #>hsaw,a
+        cmp     x0,a
+        jeq     oh_quiet
+        move    #>htri,a
+        cmp     x0,a
+        jeq     oh_quiet
+        move    #>hfdone,a              ; (a floating output that has run out: nothing left to count)
+        cmp     x0,a
+        jne     oh_store
+oh_quiet:
+        move    #>hquiet,x0
+oh_store:
         move    x0,x:<S_WH
         rts
 
@@ -2200,36 +2603,28 @@ write_shift_register:
         move    x:<S_WAVEOUT,x0
         move    y:<S_SR,a
         jset    #11,x0,ws_1
-        move    #>$efffff,y0
-        and     y0,a
+        bclr    #20,a1
 ws_1:
         jset    #10,x0,ws_2
-        move    #>$fbffff,y0
-        and     y0,a
+        bclr    #18,a1
 ws_2:
         jset    #9,x0,ws_3
-        move    #>$ffbfff,y0
-        and     y0,a
+        bclr    #14,a1
 ws_3:
         jset    #8,x0,ws_4
-        move    #>$fff7ff,y0
-        and     y0,a
+        bclr    #11,a1
 ws_4:
         jset    #7,x0,ws_5
-        move    #>$fffdff,y0
-        and     y0,a
+        bclr    #9,a1
 ws_5:
         jset    #6,x0,ws_6
-        move    #>$ffffdf,y0
-        and     y0,a
+        bclr    #5,a1
 ws_6:
         jset    #5,x0,ws_7
-        move    #>$fffffb,y0
-        and     y0,a
+        bclr    #2,a1
 ws_7:
         jset    #4,x0,ws_8
-        move    #>$fffffe,y0
-        and     y0,a
+        bclr    #0,a1
 ws_8:
         move    a1,y:<S_SR
         move    y:<S_NOISE,a
@@ -2321,6 +2716,9 @@ wave_post:
         jclr    #0,x0,wp_noacc
         jset    #11,x:<S_WAVEOUT,wp_noacc       ; acc &= (waveform_output << 12) | $7fffff: only the msb can go
         jclr    #11,x:<S_ACC,wp_noacc
+        jsr     noise_flush             ; the noise edges up to the old phase
+        clr     a
+        move    a1,x:G_SCNT
         bclr    #11,x:<S_ACC
         jsr     thr_update
         move    y:S_WF,x0
@@ -2388,7 +2786,7 @@ wso_post:
 ; when the phase after dt_min - 1 cycles is at or past the toggle; only then is
 ; the count searched. (S_FREQE is zero under the test bit: the phase is held.)
 sync_check:
-        move    x:G_DTMIN,a
+        move    y:<G_DTMIN,a
         move    #>1,x0
         sub     x0,a
         move    a1,x0
@@ -2421,17 +2819,20 @@ sc_back:
         jge     sc_back
         move    (r1)+
         nop
-        move    r1,x:G_DTMIN
+        move    r1,y:<G_DTMIN
 sc_done:
         rts
 
 ; ---- hard sync: this voice restarts the phase of the voice it syncs. reSID
 ; computes pulse_output in clock(), before the restart: in the frame's last
 ; step that level is what the output stage sees, so it is latched (S_MSB bit 1)
-; until the voice's next clock, which S_THR = 0 sends through os_gen.
+; until the voice's next clock, which S_THR = 0 sends through oscs.
 sync_reset:
-        move    x:G_DTOSC,a
-        move    x:G_DTMIN,x0
+        jsr     noise_flush_@D@         ; the noise edges it had passed
+        move    #>$80,x0
+        move    x0,x:DST_NEDGE
+        move    x:G_SLEFT,a
+        move    y:<G_DTMIN,x0
         cmp     x0,a
         jne     sr_clr
         jset    #3,x:<DST_TEST,sr_clr   ; (under the test bit the pulse is high anyway)
@@ -2451,19 +2852,36 @@ sr_clr: clr     a
         move    a,l:<DST_ACC
         move    a1,x:<DST_BLCNT
         jset    #0,x:<DST_MSB,sr_done   ; (its S_THR is 0 then, and stays)
-        move    #>$80,x0
+        move    #>$800,x0
         move    x0,x:<DST_THR
 sr_done:
         rts
 
 ; ------------------------------------------------------------ output, slow side
-hf_ttl:                                 ; b = the floating output's TTL, running
+hf_exp:                                 ; the TTL ran out, or had before: the code is zero from here on,
+        move    y:S_TTL,a               ; and the handler is hfdone (hquiet at envelope DAC zero)
+        tst     a
+        jeq     hfe_was
+        clr     a
+        move    a1,x:<S_WAVEOUT
+        move    a1,y:S_TTL
+hfe_was:
+        move    #>hfdone,x0
+        move    x0,y:S_BASEWH
+        jsr     output_handler
+        move    x:<G_EPS13,y1
+        jmp     hf_go
+
+; the same under the test bit (htest stays the handler)
+hft:    move    y:S_TTL,b
+        tst     b
+        jeq     hf_go
         move    x:<G_N,x0
         sub     x0,b
-        jgt     hf_keep
+        jgt     hft_keep
         clr     b
         move    b1,x:<S_WAVEOUT
-hf_keep:
+hft_keep:
         move    b1,y:S_TTL
         jmp     hf_go
 

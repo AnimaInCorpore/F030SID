@@ -185,8 +185,8 @@ register cleared (zero wait states on external memory).
 | X external | $0200-$03ff | envelope table (host-loaded) |
 | X external | $0400-$13ff | waveform DAC (host-loaded) |
 | Y internal | $7f-$ff | polyBLEP step residual, 129 words (host-loaded) |
-| X external | $1400-$23ff, $2400-$33ff | combined waveform tables 6, 7 (host-loaded) |
-| X external | $3400-$36ff, $3800-$3bff | the stream's write queue and ring |
+| X external | $1400-$23ff | combined waveform tables 6 and 7, twelve bits each of the same words (host-loaded: `LOAD_X`, then `LOAD_X_HI`) |
+| X external | $2400-$26ff, $3000-$3fff | the stream's write queue and ring |
 | Y external | $1c00-$2bff, $2c00-$3bff | combined waveform tables 3, 5 (host-loaded) |
 
 External P aliases external Y (docs/dsp56001-notes.md): the kernel stays below
@@ -195,10 +195,14 @@ P:$1c00 and the Y tables sit above it. The Hatari gate exercises this aliasing.
 ## The SSI stream (protocol v7)
 
 `DSP_CMD_STREAM_START` turns the transmitter on. Its interrupt (a two-word fast
-interrupt at P:$0010, `r3/m3`) plays a ring of 1024 stereo frames in external X;
+interrupt at P:$0010, `r3/m3`) plays a ring of 4096 frames in external X, one word
+a frame, sending each word twice (left and right: `n3` alternates between 0 and 1,
+read through `r7` so that the interrupt leaves the condition codes alone);
 the command loop renders ahead of it whenever the host is silent (`stream_step`),
-in runs, until 1536 words (768 frames, 15.6 ms) wait (half of that until protocol v10; the
-larger ring carries a tune over its busy stretches: Cybernoid II needed it). Register writes arrive with
+in runs, until 3584 frames (72.9 ms) wait. Until protocol v10 the ring was 1024
+stereo frames with 7.8 and then 15.6 ms of render-ahead; the larger ring carries a
+tune over its busy stretches (Cybernoid II needed the first doubling, 808 Love the
+4096 frames of v11: [realtime.md](realtime.md)). Register writes arrive with
 `DSP_CMD_STREAM_PUSH count, count * (cycle, register, value), horizon`:
 
 - each write is stamped with its SID cycle (mod 2^24) and goes into a 256-entry
@@ -223,14 +227,18 @@ time from the 200 Hz tick as the player will: clock and checksum must equal the
 reference's, the transmitter must never overtake, and the run must take the
 frames' playing time. Results (`tools/dsp/stream_gate_results.txt`, both models):
 the music and tone traces are identical and in real time (the ring never falls
-below 627 of 768 words); `noise` is identical and not quite in real time (the ring
+below 627 of 768 words; with the 4096-frame ring of 2026-10-05, 3553 of 3584 frames); `noise` is identical and not quite in real time (the ring
 runs down to a few words and the transmitter overtakes once, which the counter did
 not see before `ss_break` checked; it is a stress trace now); the stress traces
 (`filt_3`, `rand_1`, `rand_2`, `sync_ring`) are identical but 5-40% slower than real time. The stream adds about 50 cycles per frame to the synthesis numbers
 below (ring write, checksum, horizon and queue countdowns, two transmit
 interrupts).
 
-## Protocol (v10)
+## Protocol (v11)
+
+v11: the ring holds 4096 frames of one word (status word 2, the least ring fill, counts
+frames); `DSP_CMD_LOAD_X_HI address, count, words` puts each word into the upper twelve bits
+of the X word there, and combined-waveform table 7 is loaded that way onto table 6's words.
 
 v10: `STREAM_PLAIN` after `STREAM_START` renders without the checksum (ten cycles a frame that
 only the gates read; the player sends it unless it runs with `-v`, and `-v -p` times that mode).
@@ -248,6 +256,11 @@ there) and the wave DAC as `(DAC - zero) << 10`; `CONFIG` must follow the table 
 for every other command.
 
 ## Next
+
+The subsequent exact-output optimizations and their 30-second tune timing
+results are recorded in [realtime.md](realtime.md). The profiles below are
+historical measurements of the earlier kernel; their label costs should not
+be treated as costs of the updated implementation.
 
 0. **Cost.** Measured with `tools/dsp/profile_frames.py` (twelve whole frames sampled through
    a gate run; the budget is 326 cycles per frame at 49.17 kHz):
@@ -310,8 +323,9 @@ for every other command.
 
    How the frame is built (`sid.asm.in`, all gated bit for bit, `tools/dsp/gate_results_rt.txt`):
    - phase: one 48-bit word `acc << 12` (X = the 12-bit waveform index, Y = the rest), advanced
-     by one MAC with `n << 11`; `S_THR` is the next index at which anything else happens (a
-     noise-register step at each rising edge of bit 19, the msb rising, the wrap), so the frame
+     by one MAC with `n << 11`; `S_THR` is the next index at which anything else happens (the
+     msb rising, the wrap; since 2026-10-05 the noise-register steps are applied lazily, see
+     [realtime.md](realtime.md)), so the frame
      is add, compare, store, and falls out of line (`oscs`) only for an event;
    - envelope: the rate counter is kept as the cycles left to its next step (`S_REM`); the
      frame subtracts and compares, and `envs` dispatches to a handler per state (`S_EH`). A

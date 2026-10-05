@@ -1,13 +1,13 @@
 trace              model  result
-music_1             6581  identical, real time: 29944 frames in 0.62 s (playing time 0.61 s), least ring fill 1475 of 1536 words
-music_1             8580  identical, real time: 29944 frames in 0.62 s (playing time 0.61 s), least ring fill 1475 of 1536 words
-music_2             6581  identical, real time: 29944 frames in 0.62 s (playing time 0.61 s), least ring fill 1434 of 1536 words
-music_2             8580  identical, real time: 29944 frames in 0.62 s (playing time 0.61 s), least ring fill 1433 of 1536 words
-tone_saw_7509       6581  identical, real time: 27948 frames in 0.58 s (playing time 0.57 s), least ring fill 1503 of 1536 words
-tone_saw_7509       8580  identical, real time: 27948 frames in 0.58 s (playing time 0.57 s), least ring fill 1504 of 1536 words
-tone_pulse_1873     6581  identical, real time: 27948 frames in 0.58 s (playing time 0.57 s), least ring fill 1507 of 1536 words
-tone_pulse_1873     8580  identical, real time: 27948 frames in 0.58 s (playing time 0.57 s), least ring fill 1507 of 1536 words
-tone_tri_17250      6581  identical, real time: 27948 frames in 0.58 s (playing time 0.57 s), least ring fill 1505 of 1536 words
-tone_tri_17250      8580  identical, real time: 27948 frames in 0.58 s (playing time 0.57 s), least ring fill 1505 of 1536 words
+music_1             6581  identical, real time: 29944 frames in 0.54 s (playing time 0.61 s), least ring fill 3568 of 3584 frames
+music_1             8580  identical, real time: 29944 frames in 0.54 s (playing time 0.61 s), least ring fill 3568 of 3584 frames
+music_2             6581  identical, real time: 29944 frames in 0.62 s (playing time 0.61 s), least ring fill 3553 of 3584 frames
+music_2             8580  identical, real time: 29944 frames in 0.62 s (playing time 0.61 s), least ring fill 3553 of 3584 frames
+tone_saw_7509       6581  identical, real time: 27948 frames in 0.58 s (playing time 0.57 s), least ring fill 3580 of 3584 frames
+tone_saw_7509       8580  identical, real time: 27948 frames in 0.58 s (playing time 0.57 s), least ring fill 3580 of 3584 frames
+tone_pulse_1873     6581  identical, real time: 27948 frames in 0.58 s (playing time 0.57 s), least ring fill 3581 of 3584 frames
+tone_pulse_1873     8580  identical, real time: 27948 frames in 0.58 s (playing time 0.57 s), least ring fill 3581 of 3584 frames
+tone_tri_17250      6581  identical, real time: 27948 frames in 0.58 s (playing time 0.57 s), least ring fill 3581 of 3584 frames
+tone_tri_17250      8580  identical, real time: 27948 frames in 0.58 s (playing time 0.57 s), least ring fill 3581 of 3584 frames
 
 PASS
