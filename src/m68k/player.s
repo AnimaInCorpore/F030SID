@@ -7,7 +7,7 @@
 ; DSP kernel's stream a couple of PAL frames ahead of the DSP's render clock;
 ; the DSP renders the chip and plays it through the SSI at 49.17 kHz
 ; (docs/dsp-kernel.md, docs/player.md). With no command tail the line is read
-; from AUTOPLAY.INF beside the program. A key stops; -t stops after that many
+; from AUTOPLAY.INF beside the program. A key stops (and is the exit code); -t stops after that many
 ; seconds of tune time; -v writes the DSP's stream status to PLAYOUT.BIN (with -p
 ; the DSP renders as it does without -v, with no checksum: the timing a listener gets)
 ; afterwards (tools/player/play_gate.py: big-endian longs, final render clock,
@@ -174,7 +174,9 @@ start:
         Fwrite  handle,#8*4,results
         Fclose  handle
 .bye:   Cconws  txt_done
-        Pterm0
+        move.w  stop_key,-(sp)          ; Pterm: the key that stopped the tune, 0 if none did
+        move.w  #$4c,-(sp)
+        trap    #1
 
 usage:  Cconws  txt_usage
         bra.s   wait_exit
@@ -468,6 +470,7 @@ play:
         move.w  #7,-(sp)                ; Crawcin: take it
         trap    #1
         addq.l  #2,sp
+        move.b  d0,stop_key+1           ; (the exit code: SIDMENU.TOS starts the next tune from it)
 
 .finish:
         move.l  HZ200.w,d0
@@ -720,6 +723,7 @@ pend_tail:      ds.l    1
 coef:           ds.l    DSP_FILTER_WORDS
 results:        ds.l    8
 handle:         ds.w    1
+stop_key:       ds.w    1
 cmdline:        ds.b    130
 path:           ds.b    130
 linebuf:        ds.b    40

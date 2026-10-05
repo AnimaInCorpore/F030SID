@@ -101,7 +101,7 @@ with `/ucrt64/bin` on `PATH`; from a plain Git-bash some tools fail.
 The gate scripts take `--jobs N` (through `DSP_GATE_ARGS`, `STREAM_GATE_ARGS`,
 `CPU_GATE_ARGS`, `PLAY_GATE_ARGS`) to run several Hatari instances at once.
 
-Outputs land in `release/`: `f030sid.tos`, `f030sid.ttp`, `sid.lod`,
+Outputs land in `release/`: `f030sid.tos`, `f030sid.ttp`, `sidmenu.tos`, `sid.lod`,
 `ratetest.tos`, `dspprobe.tos`.
 
 ## Repository map
@@ -112,6 +112,8 @@ Outputs land in `release/`: `f030sid.tos`, `f030sid.ttp`, `sid.lod`,
   for a kernel larger than the 512 words `Dsp_ExecBoot` installs.
 - `src/m68k/player.s`: the player (`f030sid.ttp`), with `cpu6502.s` (6510 core),
   `psid.s` (loader and call schedule) and `filtcoef.s` (filter coefficients).
+  `src/m68k/sidmenu.s`: the tune menu (`sidmenu.tos`): keys 1 to 9 start the
+  player on the tunes a `MENU.INF` lists ([`docs/player.md`](docs/player.md)).
 - `src/m68k/main.s`: the bring-up program (`f030sid.tos`, `make smoke`);
   `voicetest.s`, `streamtest.s`, `cputest.s`, `coeftest.s`: the gates' harnesses;
   `ratetest.s`, `dspprobe.s` (+ `src/dsp/*.asm`): hardware validation programs.

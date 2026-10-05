@@ -11,9 +11,25 @@ the fitted filter, see dsp-kernel.md); what the 6510 side does and does not
 emulate is in `tools/player/README.md` (no ROMs, CIA, VIC or interrupts: PSID
 tunes with a play routine at a fixed rate; no RSID, no interrupt-driven digis,
 PAL only, one SID). Not yet there: fade-out and song lengths, a display beyond
-title and author, tune selection while playing. Nothing has run on a real
+title and author. Nothing has run on a real
 Falcon. On an error the player now waits for a key, so the message can be read
-when it was started from the desktop.
+when it was started from the desktop. The key that stops a tune is the
+player's exit code (0 when `-t` or the tune's end stopped it), which is what
+the tune menu below switches tunes with.
+
+**The tune menu.** `release/sidmenu.tos` (`src/m68k/sidmenu.s`) lists up to nine
+tunes and starts `F030SID.TTP` on the one whose key, 1 to 9, is pressed. It
+and the player must be in one folder, with a `MENU.INF` of one line per tune:
+
+    command tail for F030SID.TTP;title shown in the menu
+
+for example `ROBOCOP3.SID;RoboCop 3` or `TUNE.SID 2 -m 8580;Tune, song 2`
+(a line without `;` shows its command tail; file names are GEMDOS names, 8.3).
+While a tune plays, 1 to 9 starts that tune at once, any other key returns to
+the menu, and Esc or Q there leaves. The menu frees all memory but its own
+before it starts the player. Checked under Hatari with injected key presses
+(menu, a tune, a switch from the playing tune, back to the menu, leaving); it
+is not part of `F030SID.ZIP` and no gate runs it.
 
 **Real tunes** (twelve from HVSC in `music/`, 2026-10-04, calibrated Hatari; `make
 tune-check`, `make tune-gate`). `tune-check`: on all ten PSID tunes the reference

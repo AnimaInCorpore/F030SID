@@ -204,7 +204,7 @@ help:
 	@echo "  clean            remove generated build/ and release/ directories"
 
 host: $(RELEASE_DIR)/f030sid.tos $(RELEASE_DIR)/f030sid.ttp \
-		$(RELEASE_DIR)/ratetest.tos $(RELEASE_DIR)/dspprobe.tos
+		$(RELEASE_DIR)/ratetest.tos $(RELEASE_DIR)/dspprobe.tos $(RELEASE_DIR)/sidmenu.tos
 
 dsp: $(RELEASE_DIR)/sid.lod
 
@@ -288,6 +288,10 @@ $(M68K_BUILD)/ratetest.o: src/m68k/ratetest.s src/m68k/xbios.i \
 	@mkdir -p $(M68K_BUILD)
 	$(VASM) $< -quiet -Felf -m68030 -Isrc/m68k -I$(GENERATED_BUILD) \
 		-o $@ -L $(M68K_BUILD)/ratetest.lst
+
+$(M68K_BUILD)/sidmenu.o: src/m68k/sidmenu.s src/m68k/xbios.i $(VASM)
+	@mkdir -p $(M68K_BUILD)
+	$(VASM) $< -quiet -Felf -m68030 -Isrc/m68k -o $@ -L $(M68K_BUILD)/sidmenu.lst
 
 $(M68K_BUILD)/dspprobe.o: src/m68k/dspprobe.s src/m68k/xbios.i \
 		$(DSPPROBE_BOOT_IMAGE) $(VASM)
@@ -413,6 +417,11 @@ tune-gate: all $(REF_BUILD)/psidref$(REF_EXE) $(REF_BUILD)/make_vec$(REF_EXE)
 		$(PLAY_GATE_ARGS) $(TUNES)
 
 $(RELEASE_DIR)/ratetest.tos: $(M68K_BUILD)/ratetest.o $(VLINK)
+	@mkdir -p $(RELEASE_DIR)
+	$(VLINK) $< -b ataritos -s -e start -o $@
+
+# The tune menu: keys 1 to 9 start F030SID.TTP on the tunes MENU.INF lists.
+$(RELEASE_DIR)/sidmenu.tos: $(M68K_BUILD)/sidmenu.o $(VLINK)
 	@mkdir -p $(RELEASE_DIR)
 	$(VLINK) $< -b ataritos -s -e start -o $@
 
