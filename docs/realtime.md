@@ -1,5 +1,10 @@
 # Real-time playback without reducing audio quality
 
+The [extended two-minute load check](heavy-load-check.md) on 2026-10-05
+finds that Monofail, which passes the 30-second window below, records five
+overtakes in normal playback and seventeen with diagnostics. All seventeen
+tunes still match the reference checksum; four others retain pacing failures.
+
 The stock Falcon has about 326 DSP instruction cycles per output frame at
 49.17 kHz. The optimizations below preserve the existing SID arithmetic and
 samples. As of 2026-10-05 all seventeen single-SID PSID tunes tried (ten in

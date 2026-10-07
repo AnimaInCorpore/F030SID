@@ -55,14 +55,14 @@ def one(args, tune, model):
     out = os.path.join(gate, "PLAYOUT.BIN")
     if os.path.exists(out):
         os.remove(out)
-    # The player closes PLAYOUT.BIN before Pterm0. The VBL count remains a
+    # The player closes PLAYOUT.BIN before Pterm ($4c). The VBL count remains a
     # failure deadline; a completed run need not idle at the GEM desktop.
     stop = os.path.join(gate, "quit.ini")
     start = os.path.join(gate, "start.ini")
     with open(stop, "w") as f:
         f.write("quit\n")
     with open(start, "w") as f:
-        f.write(f"b GemdosOpcode = 0 :once :trace :file {stop}\n")
+        f.write(f"b GemdosOpcode = $4c :once :trace :file {stop}\n")
     env = dict(os.environ, SDL_VIDEODRIVER="dummy", SDL_AUDIODRIVER="dummy")
     with open(os.path.join(gate, "hatari.out"), "w") as f:
         subprocess.run(
