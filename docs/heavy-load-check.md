@@ -9,6 +9,12 @@ and optimization details are in [realtime.md](realtime.md). Monofail’s earlier
 
 The target ring fill is 3584 frames at 25175000 / 512 Hz. Every run has SSI underrun flag zero; an overtake is independently a failure even when that flag is clear. The elapsed timer includes tune initialization. A matching checksum does not turn a timing failure into a pass.
 
+Player-gate minimum fill and overtake verdicts use the snapshot taken while
+feeding is active, within roughly 40.6 ms of the render endpoint. The final
+overtake count is recorded separately but is not checked by the current gate;
+the final SSI underrun flag is checked. These results do not establish
+continuity of the final buffered tail. See [diagnostic fields](player.md#scope-and-gates).
+
 | Tune | Model | Normal elapsed (s) | Normal least fill | Normal overtakes | Diagnostic elapsed (s) | Diagnostic least fill | Diagnostic overtakes | Gate |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
 | Commando | 6581 | 120.02 | 3418 | 0 | 120.02 | 3368 | 0 | Pass |

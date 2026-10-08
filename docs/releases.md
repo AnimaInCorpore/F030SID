@@ -2,8 +2,11 @@
 
 [GitHub Releases](https://github.com/AnimaInCorpore/F030SID/releases) provides
 prebuilt downloads so a Falcon user does not need the assembler toolchain.
-The initial release is `v0.1`, marked as a preview because physical hardware
-validation remains outstanding.
+The current published release is [v0.1](https://github.com/AnimaInCorpore/F030SID/releases/tag/v0.1),
+created on 2026-10-08 at commit `4781be06dfb8a62fa90ab1aee14b6d33e5d1184f`.
+It is marked as a preview because physical hardware validation remains
+outstanding. The tag and assets describe that snapshot; current checkout
+documentation may include later corrections.
 
 ## Assets
 
@@ -24,9 +27,21 @@ Falcon playback have not been verified. Single-SID PAL PSID tunes are supported,
 subject to the measured [playback limits](heavy-load-check.md). RSID,
 interrupt-driven digis, NTSC and extra SIDs remain unsupported.
 
+## Validation of v0.1
+
+`make check` passes with clean DSP assembler listings. The packaged demo gate
+passes both 6581 and 8580 for 32 seconds: 1,573,438 frames per model,
+32.02 seconds elapsed, minimum ring fill 3563 of 3584 frames, matching
+reference checksums and no overtakes or SSI underrun flag. The published
+player's SHA-256 is
+`0ec20ffef469928b38275079924a5fc02dbba5f060f2e8c14ef4e3ec56f7072b`,
+matching the player used for the [2026-10-05 load check](heavy-load-check.md).
+These are emulator checks, not physical-Falcon validation.
+
 ## Preparing a release
 
-Commit the intended source and documentation, then use a clean checkout:
+Commit the intended source and documentation, then use a clean Git checkout
+with both submodules initialized at their recorded revisions:
 
 ```sh
 make release-assets
@@ -44,7 +59,8 @@ and select the revision recorded in `SOURCE-REVISION.TXT` before building:
 
 ```sh
 git clone https://github.com/AnimaInCorpore/f030dsp3d.git third_party/f030dsp3d
-git -C third_party/f030dsp3d checkout <recorded-toolchain-commit>
+toolchain_rev=$(awk '$1 == "third_party/f030dsp3d" {print $2}' SOURCE-REVISION.TXT)
+git -C third_party/f030dsp3d checkout "$toolchain_rev"
 make check package
 ```
 

@@ -25,7 +25,8 @@ missed synthesis deadline.
 The latest synthetic stress check matches clocks and checksums in all twenty
 cases. Eighteen meet timing; `filt_3` overtakes once on each model. Stress mode
 permits timing failures, so its printed PASS is not a real-time guarantee.
-No complete songs, all subsongs or physical-Falcon playback have been checked.
+Whole-song performance, all-subsong coverage and physical-Falcon playback
+have not been established.
 
 ## Current optimizations
 
@@ -93,7 +94,8 @@ does not resend coefficients.
   against 15.6 ms before.
 
 Why the ring, when "a larger ring cannot fix sustained overload" still
-holds: the measured 808 Love passages are short enough for the ring. Monofail's longer overload is not (see the two-minute check). With two voices on
+holds: the measured 808 Love passages are short enough for the ring.
+Monofail's longer overload is not (see the two-minute check). With two voices on
 noise at the top rate and the third through the filter the frame costs
 360-409 cycles; 808 Love does that for about a quarter of a second at a
 time, and is at about 316 on average over the same second. The gather of

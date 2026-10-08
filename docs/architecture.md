@@ -8,13 +8,13 @@ F030SID runs a single PAL SID on the Falcon030: the 68030 executes the tune's
 
 | Processor | Responsibilities |
 | --- | --- |
-| 68030 | Load the tune, maintain 64 KB RAM, execute init/play routines, timestamp SID writes, derive filter coefficients, feed the DSP, handle keys and restore sound state |
+| 68030 | Load the tune, maintain 64 KB RAM, execute init/play routines, timestamp SID writes, derive filter coefficients, feed the DSP, handle keys and release sound/DSP locks |
 | DSP56001 | Three SID voices, envelopes, waveforms, sync/ring/test behavior, filter and mixer, render clock, write queue, SSI output |
 
 The player accepts PSID and RSID headers, but only PSID tunes with a callable
 play routine at a fixed rate are supported. The 6510 environment has no ROMs,
 CIA/VIC interrupts or banking. It provides raster reads and a fixed play
-schedule using the PAL frame period or the timer latch left by init.
+schedule using the PAL frame period or the current timer latch stored in RAM.
 See [player behavior](player.md) and [the core's rules](../tools/player/README.md).
 
 ## Data flow
@@ -30,8 +30,10 @@ See [player behavior](player.md) and [the core's rules](../tools/player/README.m
    belonging to each frame before synthesis.
 5. The DSP renders into a 4096-frame mono ring, targeting 3584 buffered frames
    (72.9 ms). SSI transmits each signed 16-bit sample to both stereo channels.
-6. A key or `-t` stops playback. The player restores sound state. It currently
-   stops at the render endpoint, so up to 72.9 ms of queued audio is unplayed.
+6. A key or `-t` stops playback; an internal cycle ceiling applies without
+   `-t`. The player stops SSI, disables DSP sound connections and releases
+   its locks. Previous sound settings are not restored. It stops at the render
+   endpoint, so up to 72.9 ms of queued audio is unplayed.
 
 Normal playback disables the diagnostic checksum. `-v` enables diagnostics;
 `-v -p` records status while using the normal checksum-free rendering path.

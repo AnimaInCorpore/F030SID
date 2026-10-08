@@ -96,8 +96,8 @@ From a shell:
               used, else the 6581.
   -t seconds  stop after that much
               playing time.  Without
-              it the tune plays until
-              you stop it.
+              it plays until a key
+              or the internal limit.
 
 Press any key to stop.  The player
 prints title, author and release line
@@ -153,8 +153,7 @@ Not supported in this preview:
 
 A tune that needs one of these either
 stays silent, plays at the wrong
-speed or plays only in part.  It does
-no harm to try.
+speed or plays only in part.
 
 Speed is the other limit.  The DSP
 has 326 cycles per sample.  A ring of
@@ -194,8 +193,12 @@ Sisters and Tetris remain unsupported.
 
 There is no fade and no song length:
 a tune plays until a key or -t.
+Without -t, the internal limit is
+about 36 minutes.
 Stopping can leave up to 73 ms of
-buffered audio unplayed.
+buffered audio unplayed.  The player
+releases its sound and DSP locks but
+does not restore prior sound settings.
 
 
 THE SOUND

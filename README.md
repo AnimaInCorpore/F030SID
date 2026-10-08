@@ -37,7 +37,10 @@ the host, DSP and playback timing. See [architecture](docs/architecture.md).
 `release/f030sid.ttp` plays PSID files: `F030SID.TTP tune.sid [song] [-m 6581|8580]
 [-t seconds]`; `make package` wraps it into `release/F030SID.ZIP` (the player, a
 demo tune, a 40-column `README.TXT`, license text and source notices).
-Everything has been built and tested under the DSP-calibrated Hatari only; nothing has run on a physical Falcon.
+The current published preview is [v0.1](https://github.com/AnimaInCorpore/F030SID/releases/tag/v0.1).
+Its packaged demo passes the 32-second player gate on both SID models. All
+playback validation is from DSP-calibrated Hatari; no F030SID build has run
+on a physical Falcon.
 
 The latest load check (2026-10-05) covers the first 120 seconds of seventeen
 single-SID PSIDs in both normal and diagnostic playback. All seventeen
@@ -69,9 +72,10 @@ What exists:
 What it does not do yet: the 6510 has no ROMs, CIA, VIC or interrupts (PSID
 tunes with a play routine at a fixed rate only; no RSID, no interrupt-driven
 sample playback); no OSC3/ENV3 readback, second SID or NTSC timing; the 6581's
-filter distortion is not modelled; noise and combined waveforms are not
-band-limited. Some real-tune passages and synthetic filter stress still
-exceed real time; the ring cannot absorb sustained overload.
+filter distortion is not modelled. Noise, combined waveforms, ring-modulated
+triangle and test-bit output are not band-limited. The player stops SSI and
+releases locks on exit but does not restore the previous sound configuration.
+Some real-tune passages and synthetic filter stress still exceed real time; the ring cannot absorb sustained overload.
 
 ## Build
 
@@ -79,15 +83,18 @@ Dependencies:
 
 - Git and the bundled toolchain submodule at `third_party/f030dsp3d`
   (vasm/vlink sources, Motorola DSP assembler, TOS 4.02 ROM).
-  `third_party/resid` is only needed for the reference-model targets;
-- Python 3, `make`, `tar`, `file`, `rg`, a C compiler (to build vasm/vlink);
+  The `third_party/resid` submodule supplies waveform data for player table
+  generation as well as the reference-model targets;
+- Python 3, `make`, `tar`, `file`, `rg`, a host C compiler (toolchain and player
+  tables); a C++ compiler, Perl, numpy and scipy for reference-model gates;
 - DOSBox Staging (or a DOSBox that accepts its flags) to run the DSP assembler;
 - Hatari for emulator targets, the DSP-calibrated build described in
   [`docs/hatari-timing.md`](docs/hatari-timing.md). Set `HATARI` explicitly
   to the calibrated executable for reproducible timing checks.
 
 ```sh
-git submodule update --init third_party/f030dsp3d     # not --recursive: Hatari's sources are not needed
+git submodule update --init third_party/f030dsp3d third_party/resid
+# No --recursive: nested toolchain dependencies are not needed here.
 make check smoke
 ```
 

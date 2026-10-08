@@ -41,12 +41,12 @@ Git-bash, libsidplayfp's `configure` fails with "invalid feature name".
 
 ## Real tunes: `pick_songs.py`
 
-The unpacked HVSC (`music/`, git-ignored; the tunes are not redistributable) is
+The unpacked HVSC (`music/`, git-ignored; tunes are not bundled here) is
 far too large to trace whole, so a test set is picked from it: famous and
 demanding.
 
 ```sh
-python3 tools/trace/pick_songs.py scan --hvsc music --sidtrace build/lsfp/sidtrace.exe   # ~6 min
+python3 tools/trace/pick_songs.py scan --hvsc music --sidtrace build/lsfp/sidtrace   # use sidtrace.exe on Windows
 python3 tools/trace/pick_songs.py select --count 40 --famous 15 > tests/songs.txt
 ```
 
@@ -58,7 +58,7 @@ playback), hard sync, ring modulation, combined waveforms and noise
 combinations, the test bit, pulse-width modulation, the write rate. HVSC does
 not record popularity, so fame is a curated list of titles; `select` takes the
 most demanding of the famous ones first (`--famous`), then the most demanding
-overall, with at most five per composer. `tests/songs.txt` is the result: 40
+overall, with at most five per composer. `tests/songs.txt` records that selection: 40
 tunes, 18 of them famous, with the reasons. It lists paths into HVSC only;
 traces are written under `build/songs/` (ignored). No tune in this selection
 is multi-SID: the scanned composers' multi-SID tunes were not among the
@@ -68,3 +68,6 @@ The trace tool's full C64 scheduling is broader than the Falcon player's
 fixed-call environment. Successful RSID or multi-SID tracing does not imply
 F030SID playback support. For the current supported-tune comparison window
 and its limitations, see [the load check](../../docs/heavy-load-check.md).
+
+This selection ranks workloads; it is not a list of tunes verified to play
+correctly or in real time on F030SID.

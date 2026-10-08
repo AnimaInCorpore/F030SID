@@ -31,7 +31,8 @@ the DSP kernel's stream. Everything here is its specification and its gates.
 - A call (init or play) runs until RTS or RTI with the stack empty, BRK/KIL, or
   a cycle limit. init is called with A = song - 1 at cycle 0; play once per
   period: a PAL frame (19656 cycles) or, with the tune's speed bit set, the CIA
-  timer latch the tune left in `$DC04/$DC05` (+1; 16421 if none). A play
+  current RAM timer latch in `$DC04/$DC05` (+1; 16421 if zero). The driver
+  reads it before each play call; it does not emulate a CIA interrupt. A play
   address of 0 means the vector the init routine left in `$0314`, else `$FFFE`.
 - So: PSID tunes with a play routine called at a fixed rate. RSID tunes, digi
   playback from NMI or raster interrupts, multi-speed through CIA interrupts
@@ -40,8 +41,9 @@ the DSP kernel's stream. Everything here is its specification and its gates.
 ## What the gates establish
 
 1. `cpu-ref-check`: on six portable exercisers (about 7,000 state dumps) the C
-   reference and libsidplayfp's 6510 write the same values with the same cycle
-   spacing (libsidplayfp's machine adds bad lines and its driver's interrupt).
+   reference and libsidplayfp's 6510 write the same values. Inter-write cycle
+   spacing matches except for permitted pauses from libsidplayfp's VIC bad
+   lines and driver interrupts; absolute start cycles are not compared.
 2. `cpu-gate`: the 68030 core logs exactly the reference's writes and cycles on
    the test tunes and twelve exercisers (unstable opcodes, ARR and I/O reads
    included).
@@ -49,9 +51,12 @@ the DSP kernel's stream. Everything here is its specification and its gates.
    models) equal the C routine's.
 4. `play-gate`: `F030SID.TTP` plays each tune for some seconds under the
    DSP-calibrated Hatari; the DSP's checksum over every rendered frame equals
-   the chip reference's (band-limited) rendering of the reference trace, the transmitter never
-   overtakes the renderer, and elapsed time stays within the gate tolerance.
-   A checksum match alone does not pass timing.
+   the chip reference's (band-limited) rendering of the reference trace, the
+   pre-end overtake snapshot is zero, and elapsed time stays within 60 ms
+   of rendered audio duration.
+   The SSI underrun flag must also be clear. A checksum match alone does not
+   pass timing; `--plain` skips checksum comparison while retaining timing
+   and render-clock checks.
 
 ## Real-tune checks
 
@@ -72,3 +77,9 @@ produce synthetic tunes for reproducible gates without a downloaded corpus.
 The player normally exits through GEMDOS Pterm ($4c); the gate quits there
 rather than idling after completion. `--plain` uses `-v -p` to record status
 without the checksum overhead.
+
+The pre-end minimum-fill/overtake snapshot is taken within roughly 40.6 ms of
+the render endpoint, before feeding stops. The final overtake count is also
+recorded in `PLAYOUT.BIN` but is not checked by the current verdict. This
+limits what a passing gate establishes about the final buffered tail. See
+[diagnostic fields](../../docs/player.md#scope-and-gates) for the result layout.

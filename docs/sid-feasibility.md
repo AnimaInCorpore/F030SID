@@ -28,10 +28,13 @@ The ring absorbs short spikes, not sustained overload. Two SIDs and nonlinear
 
 ## Quality findings (measured)
 
-Ground truth for everything below is the chip evaluated every SID cycle, then
+The analytical reference for the oscillator experiments is an ideal waveform
+evaluated every SID cycle, then
 low-passed ideally (windowed sinc, passband 20 kHz, stopband from
 fs - 20 kHz so nothing folds into the band) and read at the codec instants.
-That is what reSID's resampling mode produces.
+This follows the same resampling principle used for the reSID-based voice
+gate, but these analytical experiments do not execute reSID. The filter
+experiments below instead compare discretizations with an analog prototype.
 
 ### 1. Oscillators alias badly unless they are band-limited
 
@@ -64,7 +67,7 @@ In-band alias power relative to the signal (dB, lower is better; full table in
   run with round numbers folded aliases onto harmonics and read -100 dB.
 
 **Update, from the reference model** (`src/ref/README.md`, measured on reSID's
-real DAC, envelope and the 20/21-cycle frame grid): the 8580 reproduces the
+modeled DAC, envelope and the 20/21-cycle frame grid): the 8580 reproduces the
 figures above (saw -55.6/-44.7 dB at 441 Hz/3.8 kHz); the 6581 is 7-9 dB worse
 on saw and triangle because its non-linear DAC puts kinks in the ramp that an
 edge-only polyBLEP does not correct. The frame grid also jitters the sample
@@ -109,7 +112,8 @@ response is above -20 dB, below 8 kHz / below 16 kHz; Q 0.707):
 | 8 kHz | 1.43 / 10.35 | 6.56 / 8.09 | 1.45 / 6.36 |
 | 12 kHz | **unstable** | 11.47 / 11.47 | 3.59 / 3.59 |
 
-(Q 1.707 and the Chamberlin form are in `noise_filter_results.txt`.)
+(Q 1.707 and the Chamberlin form are in
+`tools/feasibility/noise_filter_results.txt`.)
 
 - Single-step forward Euler or Chamberlin goes unstable at the top cutoffs
   (reSID itself sub-steps for exactly this reason).

@@ -5,7 +5,8 @@ SID voices (oscillator, noise, waveform tables, DAC, envelope, hard sync, ring
 modulation, test bit) rendered one 49,169.921875 Hz codec frame at a time in
 the integer arithmetic of the DSP56001. It is gated against reSID
 (`third_party/resid`) on register traces. The filter, external filter and
-mixer are in it too (graded by spectrum, not bit-exact, see below).
+mixer are included too. Their response is graded against reSID by spectrum;
+the DSP must match this C model exactly, including the mixer output.
 
 ```sh
 git submodule update --init third_party/resid
@@ -35,7 +36,7 @@ MSYS2 shell with the UCRT64 toolchain on `PATH`. Last results:
    chip output is ideally low-passed and read at the uniform codec instants.
    The model's `bl` output has 4-point polyBLEP on saw/pulse edges and the
    waveform evaluated at the true sample instant. In-band alias power
-   relative to the note, in dB (full table in `gate_results.txt`):
+   relative to the note, in dB (full table in `../../tools/ref/gate_results.txt`):
 
    | | naive (reSID fast mode) | bl, 8580 | bl, 6581 |
    | --- | ---: | ---: | ---: |
@@ -138,15 +139,15 @@ is not enough, the DSP's 56-bit accumulator or the host takes over:
 | Quantity | Width | On the DSP |
 | --- | --- | --- |
 | `freq * eps` (phase extrapolation) | 40 bits | one MPY, accumulator |
-| polyBLEP position `d * 4 / D` (distance to the edge over the phase step per frame) | 48 / 24 bits | a 16-bit `DIV`, only in frames near an edge |
+| polyBLEP position `d * 4 / D` (distance to the edge over the phase step per frame) | 48 / 24 bits | `DIV` near an edge: 16 quotient bits on the general path, 24 on the fast pulse path |
 | `D` = freq * cycles per frame | 21 bits | one MPY on a frequency write |
 | polyBLEP correction `jump * t` and the final `wave * env` | 33-37 bits | MPY/MAC into the accumulator, one rounding to 24 |
 | cycles per frame, Q24 | 29 bits | only its fraction (24 bits) is added per frame; the integer part is a constant 20 |
 | DAC and combined-wave tables | 12 bit data | host-generated; combined tables are reSID's data files |
 
 The tables (wave DAC, envelope DAC, polyBLEP, the 16 combined waveforms) are
-built at start by `sid_tables_init`; on the Falcon the 68030 loads the embedded tables and
-uploads them. reSID's `wave*.dat` and code are GPL-licensed, and this
+built at start by `sid_tables_init` in host tools. Player builds embed them
+using `gen_player_tables.c`; the Falcon loads and uploads those embedded tables. reSID's `wave*.dat` and code are GPL-licensed, and this
 directory is derived from them.
 
 ## Files

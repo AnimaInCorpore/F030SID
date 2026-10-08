@@ -16,16 +16,19 @@ make smoke HATARI=/path/to/calibrated/hatari
 HATARI := /path/to/calibrated/hatari
 ```
 
-For direct Python gate commands, export the executable path or use `--hatari`:
+An exported `HATARI` also configures make. Direct Python gate commands
+require an explicit `--hatari`; player gates also require `--tos`:
 
 ```sh
 export HATARI=/path/to/calibrated/hatari
 python3 tools/player/play_gate.py --hatari "$HATARI" --help
 ```
 
-The resolver in `tools/hatari_binary.py` honors `HATARI`; explicit command-line
-selection takes precedence. Without an override, the build searches configured
-local candidates and falls back to `hatari` on PATH. Set the path explicitly
+The Makefile selects the executable and passes it to the gate scripts. The
+shared resolver in `tools/hatari_binary.py` offers the same local candidates,
+but direct gate entry points require their command-line paths. Without an
+override, make searches configured local candidates and falls back to
+`hatari` on PATH. Set the path explicitly
 for reproducible runs. The Makefile can warn when it does not recognize an
 override as its detected calibrated build; verify that your executable has
 the corrections below before interpreting timing results.

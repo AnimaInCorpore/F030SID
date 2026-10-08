@@ -21,17 +21,22 @@ F030SID.TTP tune.sid [song] [-m 6581|8580] [-t seconds] [-v] [-p]
 - `song` is one-based; omission uses the tune's default subsong.
 - `-m` overrides the header-selected model, otherwise defaulting to 6581 when
   the header does not specify one.
-- `-t` stops at that many seconds of tune time. Without it, a key stops playback.
+- `-t` stops at that many seconds of tune time. A key can stop playback at any
+  time. Without `-t`, an internal cycle ceiling also ends playback after about
+  36.3 minutes; this is not a song-length lookup.
 - `-v` writes the DSP status to `PLAYOUT.BIN` with its diagnostic checksum enabled.
 - `-v -p` records status with the checksum disabled, as in normal playback.
 
 With no command tail the player reads the same line from `AUTOPLAY.INF` in
-the current folder. Paths are whitespace-delimited. Files larger than 66000
-bytes are rejected. The player prints the title, author and release text.
+the current folder. Paths are whitespace-delimited. The loader reads at most
+66000 bytes; larger files are unsupported and may be truncated rather than
+rejected. The player prints the title, author and release text.
 An error waits for a key so the desktop user can read it.
 
 The DSP program and tables are embedded in the TTP. The host configures the
-Falcon sound path, then restores its saved state and releases locks on exit.
+Falcon sound path. On exit it stops the DSP stream, disables DSP sound
+connections and releases sound/DSP locks; it does not save and restore the
+previous attenuation, codec mode or crossbar routing.
 The stopping key becomes the exit code; a timed stop returns zero. There is
 no fade or song-length database. The stop occurs at the render endpoint,
 leaving up to 72.9 ms buffered audio unplayed.
@@ -86,3 +91,11 @@ components. `make play-gate` checks generated tunes end to end;
 `make package-gate` checks the packaged demo. `make tune-check` compares local
 music with libsidplayfp; `make tune-gate` checks 30-second playback with the
 selected chip model. Timing, output and overtake checks must all pass.
+
+With `-v`, `PLAYOUT.BIN` contains eight big-endian 32-bit words: final render
+clock, checksum, minimum fill sampled before the endpoint, overtakes sampled
+before the endpoint, final SSI underrun flag, final overtake count, generated
+6510 cycles and elapsed 200 Hz ticks. The fill/overtake snapshot is taken
+within roughly 40.6 ms of the render endpoint, while feeding is still active.
+The current gate checks that snapshot's overtakes and the final SSI flag;
+it records the final overtake count but does not use it for the verdict.
