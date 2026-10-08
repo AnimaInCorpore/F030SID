@@ -8,6 +8,20 @@ parameter dialog or a shell:
 F030SID.TTP tune.sid
 ```
 
+## Download and run on a Falcon
+
+Download [F030SID.ZIP](https://github.com/AnimaInCorpore/F030SID/releases/download/v0.1/F030SID.ZIP)
+from [GitHub Releases](https://github.com/AnimaInCorpore/F030SID/releases).
+Extract the `F030SID` folder and transfer it to your Atari Falcon030. Keep the
+player, demo and documentation together, double-click `F030SID.TTP`, and enter
+`DEMO.SID` in the TOS parameter dialog. For your own music, pass its `.sid`
+filename instead. The DSP program is embedded; no separate `.LOD` is needed.
+
+Use a Falcon030 with a working DSP56001 and about 1 MB of free RAM. TOS 4.02
+is the tested emulator configuration. This is a preview for hardware testing:
+physical-Falcon playback remains unverified. See [player instructions](docs/player.md)
+for options and [release packaging](docs/releases.md) for source and checksums.
+
 The 68030 executes the tune's original 6510 code; the DSP56001 emulates the
 MOS 6581/8580 SID and feeds 16-bit stereo audio to the Falcon DAC. Current
 playback support is **single-SID PAL PSID**. RSID, interrupt-driven sample
@@ -22,8 +36,8 @@ the host, DSP and playback timing. See [architecture](docs/architecture.md).
 
 `release/f030sid.ttp` plays PSID files: `F030SID.TTP tune.sid [song] [-m 6581|8580]
 [-t seconds]`; `make package` wraps it into `release/F030SID.ZIP` (the player, a
-demo tune and a 40-column `README.TXT`). Everything has been built and tested
-under the DSP-calibrated Hatari only; nothing has run on a physical Falcon.
+demo tune, a 40-column `README.TXT`, license text and source notices).
+Everything has been built and tested under the DSP-calibrated Hatari only; nothing has run on a physical Falcon.
 
 The latest load check (2026-10-05) covers the first 120 seconds of seventeen
 single-SID PSIDs in both normal and diagnostic playback. All seventeen
@@ -104,7 +118,8 @@ with `/ucrt64/bin` on `PATH`; from a plain Git-bash some tools fail.
 | `make coef-gate` | the 68030 filter coefficient routine against the C one | Hatari |
 | `make play-gate` | the player end to end: PSID in, the DSP's frames out | Hatari |
 | `make trace`, `make trace-test` | `sidtrace` (PSID to register trace via libsidplayfp) | network, host C++ |
-| `make package` | `release/F030SID.ZIP`: `F030SID.TTP`, `DEMO.SID`, `README.TXT` (`package/README.TXT`, sent with CRLF) | `zip` |
+| `make package` | `release/F030SID.ZIP`: player, demo, README and upstream notices (text sent with CRLF) | `zip` |
+| `make release-assets` | binary downloads, matching source archive and SHA-256 checksums from a clean commit | Git, `zip` |
 | `make package-gate` | the packaged player on the packaged demo tune, through the player gate | Hatari |
 | `make tune-check` | real tunes in `music/*.sid` (git-ignored; `TUNES=...`): the reference 6510 core against libsidplayfp | `make trace` |
 | `make tune-gate` | the same tunes through the player, 30 s each with the tune's chip model | Hatari |

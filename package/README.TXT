@@ -40,6 +40,8 @@ FILES
   F030SID.TTP  the player
   DEMO.SID     a short demo tune
   README.TXT   this file
+  COPYING.TXT  upstream GPL text
+  SOURCE.TXT   source and notices
 
 SIDMENU.TOS is a separate source
 build with a nine-tune keyboard menu;
