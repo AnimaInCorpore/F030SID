@@ -5,9 +5,9 @@ Falcon. The 68030 hosts the tune (a 6502 core plus the C64 memory map that PSID 
 the Falcon DSP56001 emulates the MOS 6581/8580 SID and feeds 16-bit stereo
 audio to the Falcon DAC.
 
-The structure is modelled on the sibling project F030MXDRV (an X68000 MDX
-player with a DSP YM2151): same toolchain, same host/DSP split and reference
-model verification. See [`docs/architecture.md`](docs/architecture.md).
+The host and DSP communicate through a cycle-stamped register stream. A C
+reference model defines the synthesis output, and independent gates verify
+the host, DSP and playback timing. See [architecture](docs/architecture.md).
 
 ## Project status
 
@@ -54,14 +54,14 @@ exceed real time; the ring cannot absorb sustained overload.
 
 Dependencies:
 
-- Git, plus the `f030dsp3d` submodule (vasm/vlink sources, Motorola DSP
-  assembler, TOS 4.02 ROM). `third_party/resid` is only needed for the
-  reference-model targets;
+- Git and the bundled toolchain submodule at `third_party/f030dsp3d`
+  (vasm/vlink sources, Motorola DSP assembler, TOS 4.02 ROM).
+  `third_party/resid` is only needed for the reference-model targets;
 - Python 3, `make`, `tar`, `file`, `rg`, a C compiler (to build vasm/vlink);
 - DOSBox Staging (or a DOSBox that accepts its flags) to run the DSP assembler;
 - Hatari for emulator targets, the DSP-calibrated build described in
-  [`docs/hatari-timing.md`](docs/hatari-timing.md). The Makefile looks for it
-  in a sibling `F030Arcade` checkout (`third_party/hatari/build*/src/`).
+  [`docs/hatari-timing.md`](docs/hatari-timing.md). Set `HATARI` explicitly
+  to the calibrated executable for reproducible timing checks.
 
 ```sh
 git submodule update --init third_party/f030dsp3d     # not --recursive: Hatari's sources are not needed
@@ -71,9 +71,9 @@ make check smoke
 Machine-specific paths go in `local.mk` (git-ignored), for example:
 
 ```make
-DOSBOX := /c/Arbeit/F030Comanche/tools/toolchain/dosbox.exe
+DOSBOX := /c/tools/dosbox/dosbox.exe
 PYTHON := /c/Users/me/AppData/Local/Microsoft/WindowsApps/python3
-# HATARI := /path/to/hatari       # override the calibrated-build search
+HATARI := /path/to/calibrated/hatari
 ```
 
 On Windows run `make` from an MSYS2 login shell (`/c/msys64/usr/bin/bash.exe -lc`)

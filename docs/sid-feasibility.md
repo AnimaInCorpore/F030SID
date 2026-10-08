@@ -1,69 +1,30 @@
-# SID feasibility study (historical)
+# SID quality and feasibility measurements
 
-This pre-implementation study retains analytical quality measurements and
-cycle estimates for design context. The SID kernel and player now exist;
-these estimates are not current performance results. See [DSP implementation](dsp-kernel.md),
-[reference-model measurements](../src/ref/README.md) and the
-[latest two-minute load check](heavy-load-check.md) for the current state.
+The analytical experiments in this document measure oscillator aliasing,
+noise sampling and filter precision at the Falcon codec rate. They use the
+scripts and recorded results in `tools/feasibility/`; the experiments model
+the chip analytically rather than executing the DSP kernel.
 
+## Current implementation and budget
 
-2026-10-02. Question: can the DSP56001 render a high-quality MOS 6581/8580
-SID at the codec's 49,169.92 kHz (prescale 1), 16-bit stereo, in real time?
+F030SID renders one PAL MOS 6581/8580 at 49,169.921875 Hz. At the modeled
+DSP clock of 32,084,988 Hz, the instruction budget is about 326.3 cycles per
+output frame, including synthesis, SSI interrupts and command transport.
+Each frame spans about 20.0376 SID cycles at the 985,248 Hz PAL clock.
+The mono output is duplicated to both stereo channels.
 
-## Verdict
+The implemented kernel uses sample-instant waveform evaluation, four-point
+polyBLEP for plain saw/pulse edges, model-specific DAC and combined-waveform
+tables, exact bulk-clocked envelopes and sync, and a fitted TPT filter with
+48-bit state. Filter coefficients are derived on the host. See
+[the DSP kernel](dsp-kernel.md) and [reference-model measurements](../src/ref/README.md).
 
-**Yes for one SID, with a deliberate definition of "high quality".** The
-cycle budget is not the obstacle; what the budget cannot buy is reSID's
-cycle-by-cycle analog models.
-
-| Target | Verdict |
-| --- | --- |
-| One SID, band-limited oscillators, 8580-class linear filter, exact ADSR/noise/sync logic, sample-accurate `$D418` writes | **Feasible.** Estimated 100-200 of 326 cycles per frame (30-60%). |
-| Same, plus 6581 character through tables (wave/envelope DAC, cutoff curve, static filter distortion) | **Feasible.** Roughly +30 cycles. |
-| 6581 filter as reSID models it (nonlinear VCR integrated every 1 MHz cycle) | **Not feasible.** About 4-6x the whole budget. Approximate it. |
-| Two SIDs (2SID tunes) at 49.17 kHz | **Tight.** Typical load fits, the worst case does not. Fall back to 32.78 kHz or a cheaper tier for the second chip. |
-| Sample-for-sample equality with reSID | **Not a goal.** Same stance as F030MXDRV's exact/practical split. |
-
-"Stereo" costs nothing extra: the SID is mono, so the two SSI words per frame
-carry the same sample. Real stereo needs a second SID (2SID tunes) or
-non-authentic per-voice panning.
-
-Status of the evidence: the **aliasing, noise, filter and precision results
-below are measured** (scripts in `tools/feasibility/`, results committed). The
-**cycle costs are estimates** from instruction counting, calibrated against
-two measured DSP kernels in sibling projects. At the time of this study the
-SID loop had not yet been assembled or profiled. Those estimates have since
-been superseded by the implemented kernel and measured tune gates (see
-[Implementation status](#implementation-status)).
-
-## Budget
-
-The DSP runs 32,084,988 Hz / 2 = 16.04 MIPS (see `hatari-timing.md`).
-
-| Output rate | Instruction cycles per frame |
-| --- | ---: |
-| 32.780 kHz (F030MXDRV) | 489.4 |
-| **49.170 kHz** | **326.3** |
-
-The SID clock is 985,248 Hz (PAL), so one output frame spans 20.0376 SID
-cycles. Rendering the chip at its own clock is out of the question (16 DSP
-cycles per SID cycle), so the kernel is a frame-rate model that must recover
-the sub-frame behaviour explicitly.
-
-Calibration points from the sibling projects, both measured in calibrated
-Hatari:
-
-- F030MXDRV, 8 FM channels x 4 operators at 32.78 kHz: 336.6 cycles per frame
-  for synthesis, about 10.5 per operator, 391.8 with transport.
-- ScummVM AdLib, OPL2 at **49.17 kHz** with 32-frame blocks: 189.7-279.4
-  cycles per frame (58-86% of 326.3) for 18 operators with feedback, tremolo,
-  vibrato and rhythm mode, i.e. 10-15 cycles per operator including all
-  block overhead. Stream-mode slack was measured down to 0.46-2.17 ms of a
-  15.62 ms period at the tightest.
-
-A SID voice is roughly 1.5-2.5 OPL operators of work (phase, waveform,
-envelope, plus band-limiting). Three voices plus a filter therefore land in
-the same order of magnitude as OPL's *lighter* cases, not its heaviest.
+The measured implementation supersedes the original paper cycle estimates.
+Some passages exceed the budget even after optimization. In the
+[latest two-minute load check](heavy-load-check.md), twelve of seventeen tunes
+pass both playback modes; Monofail overtakes and four other tunes miss pacing.
+The ring absorbs short spikes, not sustained overload. Two SIDs and nonlinear
+6581 filter distortion are not implemented.
 
 ## Quality findings (measured)
 
@@ -90,8 +51,7 @@ In-band alias power relative to the signal (dB, lower is better; full table in
 | triangle 3801 Hz | -35.2 | -46.2 | -41.7 | -43.3 | n/a | n/a | n/a |
 
 - **Naive per-frame sampling (reSID's fast mode) is poor**: -11 to -30 dB on
-  saw/pulse, i.e. an audible inharmonic haze. This is the same lesson the
-  OPL project learned (blurry at 32.78 kHz).
+  saw/pulse, i.e. an audible inharmonic haze.
 - **Oversampling does not pay**: each doubling buys about 4-5 dB, and 4x is
   not affordable anyway.
 - **PolyBLEP does**: 4-sample gives -45 to -64 dB, 6-sample -58 to -80 dB.
@@ -114,7 +74,7 @@ not reached.
 
 Limits: noise and combined waveforms have no clean edges to correct, and
 sync resets are discontinuities whose position must be known to sub-frame
-accuracy (see Design implications). Not measured here: sync, ring
+accuracy. Not measured here: sync, ring
 modulation, PWM sweeps, combined waveforms.
 
 ### 2. Noise: sample or average, both fine; average at high rates
@@ -175,108 +135,23 @@ cutoffs (low `g` amplifies the truncation error). The DSP56001 has 56-bit
 accumulators and `L:` 48-bit moves, so keep both states double-precision (or
 at minimum round); this costs about one extra instruction per integrator.
 
-## Cycle estimate (not measured)
+## Interpretation and remaining checks
 
-Per output frame at 49.17 kHz, operator-major block loops as in the OPL and
-YM2151 kernels, voice state in internal X/Y. "Typical" is a mixed-waveform
-tune; "worst" is all three voices on the most expensive paths simultaneously.
+The oscillator experiments motivate band-limiting; the precision experiments
+motivate 48-bit filter states. Their idealized models do not establish
+whole-player cycle cost or real-time performance. The current fitted filter
+has separate measured response results in [the reference docs](../src/ref/README.md).
 
-| Stage | Typical | Worst | Notes |
-| --- | ---: | ---: | --- |
-| Phase accumulator, envelope ramp, multiply, store | 15 | 21 | 5-7 per voice; 24-bit phase wraps in the accumulator, saw is the phase itself |
-| Waveform shaping (tri `abs`, pulse compare+limit) | 8 | 24 | saturating move gives a branchless pulse |
-| Combined waveform / DAC table lookups | 0 | 24 | 4 tables (PS, PT, ST, PST), ~8 cycles each incl. pointer-latency `nop` |
-| PolyBLEP-4 at edges | 10 | 36 | typical: edge check ~5 per edge, correction on ~10% of frames |
-| Noise (LFSR step, 8-bit gather, box weights) | 0 | 36 | only voices with noise selected pay |
-| Sync/ring-mod bookkeeping | 3 | 12 | master edge time ring, sub-frame slave reset (amortised divide) |
-| Mix to filter/direct buses | 6 | 6 | |
-| TPT filter, double-precision states | 16 | 32 | worst: two substeps at high cutoff |
-| External RC filters (HP ~16 Hz, LP ~16 kHz), volume, DC, clip | 12 | 12 | `$D418` volume and voice DC offset are what make digis audible |
-| Event FIFO check per frame, `$D418` sample-accurate writes | 4 | 10 | |
-| Block-boundary pass: envelope rate/ADSR counters, parameter loads | 7 | 14 | OPL measured ~60 for 18 operators at 32-frame blocks; SID has 3 voices |
-| SSI transmit interrupt (2 words/frame), ring, refill receive | 25 | 30 | OPL measured 14-23 plus loaders; F030MXDRV 55 incl. PCM |
-| **Total** | **~106 (33%)** | **~257 (79%)** | of 326.3 |
+Noise averaging, BLAMP and other quality options discussed above are study
+findings, not implemented features. Noise and combined waveforms currently
+use integer-cycle output; the implemented kernel must match the reference
+sample for sample. Its filters approximate chip response rather than the
+full nonlinear circuit.
 
-How to read it: the typical case has ample margin; the worst case stays under
-the budget but not under the 20% worst-period margin OPL asked of itself, so
-the worst-case paths (all-noise, all-combined, high-cutoff substeps) must be
-measured and, if needed, cut (e.g. 6581-flavoured extras off). The block
-structure also means per-frame cost is variable, and a 15.62 ms period has to
-fit on average, not per frame. Quality extras fit in the margin:
-- 6581 flavour via tables (wave DAC, envelope DAC, static filter waveshaper,
-  cutoff curve on the host): about +30.
-- PolyBLEP-6 instead of -4: edge corrections cost 50% more on the frames they
-  touch.
-
-Why exact reSID 6581 is out: its filter is clocked every 985 kHz cycle with
-a nonlinear voltage-controlled-resistor integrator at several dozen
-operations per cycle. At 20 cycles per frame that is 1,000-2,000 DSP
-instructions per frame, 3-6x the entire budget, before the oscillators.
-This is an estimate from reading the algorithm, not a profile.
-
-## Design implications
-
-These refine `architecture.md` and `scummvm-opl-hints.md`:
-
-1. **Target 49.17 kHz first.** Naive 32.78 kHz would alias more (the same
-   bright-material finding as the OPL project) and the budget is not the
-   constraint. Keep 32.78 kHz as the fallback for 2SID.
-2. **Band-limit saw and pulse with 4-point polyBLEP** (6-point if the budget
-   allows). Do not spend cycles on oversampling.
-3. **Sub-frame timing is a first-class feature**: a frame is 20.04 cycles.
-   Sync resets and noise steps need the fractional time of the event inside
-   the frame (a reciprocal-table or iterative divide, amortised since sync is
-   rare). Register writes need timestamps in SID cycles; `$D418` writes
-   (digis) must land on the right frame, not the right 32-frame block.
-4. **Block-rate control for envelopes only** (ramped per frame within a
-   block), per the OPL result that 32-frame blocks cost more for little gain;
-   consider 64.
-5. **Filter**: TPT SVF, coefficients and the cutoff curve (6581/8580) on the
-   host, double-precision states.
-6. **Tables, not circuits**: wave DAC, envelope DAC, combined waveforms,
-   cutoff curve, filter waveshaper. Combined waveforms are 4 x 4096 words per
-   model in external X/Y (the OPL kernel already uses ~16K words per space).
-   They can be generated from reSID/residfp's analytic models on the host.
-   The reSID code and its tables are GPL-licensed; decide how F030SID is
-   licensed before shipping anything derived from them.
-7. **Host load is modest for normal tunes** (estimate, not measured): a
-   6502 interpreter at roughly 6-10 68030 clocks per 6502 cycle would use
-   37-62% of the 16 MHz 68030 only if the 6502 ran flat out (985,248
-   cycles/s); a typical 50 Hz play routine is busy a few percent of the time.
-   Digi and multispeed tunes are the heavy case. The 68030 only has to
-   timestamp and queue writes.
-8. **Stereo**: duplicate the mono sample. For 2SID tunes either run two
-   kernels at 32.78 kHz or accept reduced quality on the second chip.
-
-## Risks and unknowns
-
-- **Cycle counts are unverified.** Pipeline `nop`s after address-register
-  writes, branch costs and Hatari's two-cycle penalty for instructions that
-  touch two external spaces are the usual ways an estimate misses by 30%.
-- **Physical hardware at 49.17 kHz is unproven.** The OPL project's 49.17 kHz
-  path has only been run in Hatari; F030MXDRV's hardware-proven rate is
-  32.78 kHz and its first hardware run found no SSI clock until the sound
-  matrix bring-up was corrected. `ratetest.tos` already measures
-  prescale 1; run it on a real Falcon before committing to 49.17 kHz.
-- **SSI interrupt rate doubles** relative to F030MXDRV; the OPL measurements
-  suggest it fits but the worst-period slack was only 0.5-2 ms.
-- **Audibility is untested.** The alias and filter numbers are objective; no
-  listening was done. -45 dB in-band alias should be inaudible on dense
-  material but not necessarily on sparse high saw leads.
-- **Combined waveforms, sync, ring mod, PWM and the 6581 filter's real
-  behaviour** are not covered by these experiments.
-- **Tunes with CIA-driven digis** (4-bit sample playback via `$D418` at 8 kHz
-  or more) put several writes per output frame through the event path.
-- **Licensing** of any reSID-derived tables (above).
-
-## Implementation status
-
-The three-voice kernel, fitted filter, band-limited output, 6510 host and SSI
-stream described as next steps in the original study have been implemented.
-The DSP/reference sample gates pass, while some tunes still miss playback
-deadlines. Physical-Falcon checks, complete-song performance and listening
-comparisons remain outstanding. Use the linked current docs for measured
-costs and supported features.
+Physical-Falcon rate/bus checks, listening comparisons, complete songs and
+all subsongs remain outstanding. High register-write rates, combined waveforms,
+sync and noise require whole-stream timing checks as well as output checks.
+Use [real-time notes](realtime.md) for the current optimized paths and limits.
 
 ## Reproducing the measurements
 

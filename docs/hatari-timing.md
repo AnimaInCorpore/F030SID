@@ -1,28 +1,34 @@
 # Hatari timing for F030SID
 
-Playback timing results in this project use the DSP-calibrated Hatari from
-F030Arcade. Its clock and host-port calibration are described in that sibling
-checkout's `hatari.md`. Sibling YM2151 playback and hardware results are not
-F030SID validation.
+Playback timing results use a DSP-calibrated Hatari build with the clock and
+host-port corrections described below. Select its executable explicitly so
+the checks do not depend on the layout of other local checkouts.
 
 ## Selecting the binary
 
-The Makefile uses an explicit `HATARI` override first, then a calibrated build
-under `F030ARCADE` (default `~/Work/F030Arcade`) or the sibling F030Arcade
-checkout, then `hatari` on PATH. It searches `build` and `build-ucrt64`, with
-both `hatari` and `hatari.exe` names. Python tools use the same candidates via
-`tools/hatari_binary.py`, honor the `HATARI` environment variable and accept
-`--hatari`.
+Pass `HATARI` to make or put it in git-ignored `local.mk`:
 
 ```sh
-make smoke
-make smoke F030ARCADE=/path/to/F030Arcade
 make smoke HATARI=/path/to/calibrated/hatari
 ```
 
-Overrides can go in git-ignored `local.mk`. The Makefile warns when the chosen
-binary differs from its detected calibrated build. An explicit override is
-allowed, but its timing must be interpreted according to that build's model.
+```make
+HATARI := /path/to/calibrated/hatari
+```
+
+For direct Python gate commands, export the executable path or use `--hatari`:
+
+```sh
+export HATARI=/path/to/calibrated/hatari
+python3 tools/player/play_gate.py --hatari "$HATARI" --help
+```
+
+The resolver in `tools/hatari_binary.py` honors `HATARI`; explicit command-line
+selection takes precedence. Without an override, the build searches configured
+local candidates and falls back to `hatari` on PATH. Set the path explicitly
+for reproducible runs. The Makefile can warn when it does not recognize an
+override as its detected calibrated build; verify that your executable has
+the corrections below before interpreting timing results.
 
 ## Why calibration matters
 
@@ -56,4 +62,4 @@ continuity, inherited sound state, external-memory bus behavior or 68030 bus
 contention under real video output. `make ratetest-hatari` and
 `make dspprobe-hatari` exercise the probe programs in the emulator; the same
 programs still need physical-Falcon checks. Keep hardware validation separate
-from emulator and sibling-project measurements.
+from emulator measurements.

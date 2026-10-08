@@ -249,11 +249,6 @@ SID reference and waveform tables
   player come from reSID's chip
   samples (GPL).
 
-Player shape
-  SIDPlayer by Phil Schatzmann and
-  cSID light by Hermit, as a model
-  for the structure
-
 Source and documentation
   github.com/AnimaInCorpore/F030SID
 

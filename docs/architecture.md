@@ -59,8 +59,7 @@ All F030SID playback results are from the DSP-calibrated Hatari described in
 [hatari-timing.md](hatari-timing.md). No F030SID build has run on a physical
 Falcon. Rate and bus probes, audio continuity, sound restoration, sustained
 playback and host bandwidth under real video contention still need hardware
-checks. Measurements inherited from sibling players do not validate this SID
-player.
+checks. Emulator measurements do not establish physical-Falcon performance.
 
 Implementation details: [DSP kernel](dsp-kernel.md),
 [DSP56001 constraints](dsp56001-notes.md), [reference model](../src/ref/README.md).

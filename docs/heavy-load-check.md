@@ -67,12 +67,14 @@ Logs and binary results are under `build/heavy-check-20261005/` (ignored): `chec
 `python3 tools/player/fetch_heavy_corpus.py` verifies/downloads the pinned
 heavy workload into ignored `music/`. Build the player and reference tools
 with `make all build/ref/psidref build/ref/make_vec` before the direct gate
-command below. The ten original tunes require your own local `music/` inputs.
+command below. Set `HATARI` to your calibrated emulator executable, as
+described in [hatari-timing.md](hatari-timing.md). The ten original tunes
+require your own local `music/` inputs.
 
 ```sh
 python3 tools/player/play_gate.py \
   --build build/monofail-120 \
-  --hatari "$HOME/Work/F030Arcade/third_party/hatari/build/src/hatari" \
+  --hatari "$HATARI" \
   --tos third_party/f030dsp3d/tools/tos402.rom \
   --seconds 120 --models tune --vbls-per-second 130 --plain \
   music/heavy/Monofail.sid
