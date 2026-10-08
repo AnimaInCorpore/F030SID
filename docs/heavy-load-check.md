@@ -2,7 +2,8 @@
 
 On DSP-calibrated Hatari, the first **120 seconds** of seventeen single-SID PSIDs were checked with their default subsong and header-selected chip model. Each tune was run with the diagnostic checksum enabled and again in normal playback mode. All seventeen render clocks and diagnostic checksums match the C reference (100,306,647 rendered frames in the diagnostic runs). **Monofail exceeds real time**: normal playback records five overtakes; diagnostic playback records seventeen. Four other tunes exceed the unchanged 60 ms pacing tolerance without overtakes. Twelve tunes pass the complete player gate in both modes.
 
-This extends the 30-second measurements in [realtime.md](realtime.md). Monofail’s earlier 30-second pass must not be taken as evidence that its later passages fit the DSP budget.
+This supersedes the earlier 30-second playback window. The current buffering
+and optimization details are in [realtime.md](realtime.md). Monofail’s earlier 30-second pass must not be taken as evidence that its later passages fit the DSP budget.
 
 ## Real songs
 
@@ -62,6 +63,11 @@ Source commit: `15a2b12bf3a0eb6f722fdf6c87a72d39504c01df`. Player SHA-256: `0ec2
 Logs and binary results are under `build/heavy-check-20261005/` (ignored): `checksum.log`, `plain.log`, `stream-stress.log`, `cpu-reference.log`, `exit-check.log`, `results.json`, and each run’s `PLAYOUT.BIN` / `stream_expected.txt`. `selection.json` records the exact seventeen input paths; `results.json` also records their SHA-256 values.
 
 ## Reproduce the failing song
+
+`python3 tools/player/fetch_heavy_corpus.py` verifies/downloads the pinned
+heavy workload into ignored `music/`. Build the player and reference tools
+with `make all build/ref/psidref build/ref/make_vec` before the direct gate
+command below. The ten original tunes require your own local `music/` inputs.
 
 ```sh
 python3 tools/player/play_gate.py \

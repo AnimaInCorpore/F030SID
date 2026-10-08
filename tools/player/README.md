@@ -50,4 +50,25 @@ the DSP kernel's stream. Everything here is its specification and its gates.
 4. `play-gate`: `F030SID.TTP` plays each tune for some seconds under the
    DSP-calibrated Hatari; the DSP's checksum over every rendered frame equals
    the chip reference's (band-limited) rendering of the reference trace, the transmitter never
-   overtakes the renderer, and the run takes the tune's playing time.
+   overtakes the renderer, and elapsed time stays within the gate tolerance.
+   A checksum match alone does not pass timing.
+
+## Real-tune checks
+
+`tune_check.py` compares the reference core's register/value sequence with
+libsidplayfp over their aligned common prefix. It does not establish exact
+per-write timing. `make tune-check` uses local `music/*.sid`; `make tune-gate`
+plays them for 30 seconds with their header-selected model. Gate arguments
+can select longer windows, separate build directories and parallel instances.
+
+`fetch_heavy_corpus.py` downloads/verifies the SHA-256-pinned workload in
+`tests/heavy-corpus.json` under ignored `music/`. It includes unsupported
+RSID and multi-SID examples; exclude those from claims about supported playback.
+The [latest two-minute check](../../docs/heavy-load-check.md) records the
+seventeen supported inputs, checksum matches, pacing failures and Monofail's
+overtakes. `make_exerciser.py`, `make_trace_sid.py` and `make_demo_trace.py`
+produce synthetic tunes for reproducible gates without a downloaded corpus.
+
+The player normally exits through GEMDOS Pterm ($4c); the gate quits there
+rather than idling after completion. `--plain` uses `-v -p` to record status
+without the checksum overhead.

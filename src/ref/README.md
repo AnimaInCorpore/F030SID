@@ -99,14 +99,11 @@ below fc 1400, and its band-pass output up to 1.7 times at the top.
 compares the filter path's response (the output spectrum over that of the voice
 routed past the filter, so the stimulus and its aliasing cancel) of reSID and the
 reference over 100 Hz - 12 kHz, in bins 10 dB above reSID's own floor. Results
-(`tools/ref/filter_gate_results.txt`), mean rms error per mode, against the
-previous tables (one two-pole fit of the low-pass output, fixed gains) graded
-the same way:
+(`tools/ref/filter_gate_results.txt`), mean rms error per mode, for the current fitted tables:
 
 | | low-pass | band-pass | high-pass | notch | all |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| before | 2.1 | 3.9 | 5.3 | 3.9 | 3.8 dB |
-| now | 1.2 | 1.7 | 0.7 | 2.8 | 1.6 dB |
+| current fit | 1.2 | 1.7 | 0.7 | 2.8 | 1.6 dB |
 
 Known gaps: the 6581 between fc 400 and 900 (the fit is 3-5 dB off in the
 low-pass there: the response depends on the resonance in a way k0 * kr does not
@@ -148,7 +145,7 @@ is not enough, the DSP's 56-bit accumulator or the host takes over:
 | DAC and combined-wave tables | 12 bit data | host-generated; combined tables are reSID's data files |
 
 The tables (wave DAC, envelope DAC, polyBLEP, the 16 combined waveforms) are
-built at start by `sid_tables_init`; on the Falcon the 68030 builds them and
+built at start by `sid_tables_init`; on the Falcon the 68030 loads the embedded tables and
 uploads them. reSID's `wave*.dat` and code are GPL-licensed, and this
 directory is derived from them.
 
@@ -160,3 +157,7 @@ directory is derived from them.
 - `../../tools/ref/ref_run.c`: runs the model on a trace.
 - `../../tools/ref/voice_gate.py`: both gates.
 - `../../tools/ref/make_voice_traces.py`: regenerates `tests/traces/voice_*.trace`.
+
+The final chip output follows the DSP's tie-to-even rounding. Bit-exact output
+and real-time playback are separate checks; the latest player timing results
+are in [the two-minute load check](../../docs/heavy-load-check.md).

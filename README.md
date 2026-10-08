@@ -1,13 +1,13 @@
 # F030SID
 
-F030SID plays Commodore 64 SID music (PSID/RSID) on an Atari Falcon. The 68030
-hosts the tune (a 6502 core plus the C64 memory map that PSID players need) and
+F030SID plays Commodore 64 SID music (single-SID PAL PSID) on an Atari
+Falcon. The 68030 hosts the tune (a 6502 core plus the C64 memory map that PSID players need) and
 the Falcon DSP56001 emulates the MOS 6581/8580 SID and feeds 16-bit stereo
 audio to the Falcon DAC.
 
 The structure is modelled on the sibling project F030MXDRV (an X68000 MDX
-player with a DSP YM2151): same toolchain, same host/DSP split, same two-tier
-verification idea. See [`docs/architecture.md`](docs/architecture.md).
+player with a DSP YM2151): same toolchain, same host/DSP split and reference
+model verification. See [`docs/architecture.md`](docs/architecture.md).
 
 ## Project status
 
@@ -16,15 +16,17 @@ verification idea. See [`docs/architecture.md`](docs/architecture.md).
 demo tune and a 40-column `README.TXT`). Everything has been built and tested
 under the DSP-calibrated Hatari only; nothing has run on a physical Falcon.
 
-Real tunes (twelve from HVSC, see [`docs/player.md`](docs/player.md)): on the ten
-PSID tunes the 6510 side writes what libsidplayfp writes and the DSP's samples
-equal the reference model's. As of 2026-10-05 all ten, and seven more demanding
-PSID tunes, play the first 30 seconds on calibrated Hatari without the
-transmitter overtaking the renderer; four end 0.1-0.2 s late, which the gate
-still counts as a failure. The two RSID tunes do not play. What was changed,
-what the measurement does not cover (whole tunes, hardware, the kernel's
-worst cases) and a full-quality audio-cache option are in
-[`docs/realtime.md`](docs/realtime.md).
+The latest load check (2026-10-05) covers the first 120 seconds of seventeen
+single-SID PSIDs in both normal and diagnostic playback. All seventeen
+checksums match the C reference; twelve tunes pass the complete player gate.
+Monofail records five transmitter overtakes in normal playback and seventeen
+with diagnostics. Four other tunes miss the 60 ms pacing tolerance without
+overtakes. These are emulator measurements, not a guarantee for complete
+songs or physical hardware. See [the load-check results](docs/heavy-load-check.md)
+and [real-time limits](docs/realtime.md).
+
+`release/sidmenu.tos` provides a separate nine-tune keyboard menu using
+`MENU.INF`; it is built by `make all` but is not included in the ZIP.
 
 What exists:
 
@@ -39,14 +41,14 @@ What exists:
 - **The player on the 68030** (`src/m68k/player.s`, [`docs/player.md`](docs/player.md),
   [`tools/player/README.md`](tools/player/README.md)): PSID loader, a 6510 core,
   the filter coefficient derivation, the feed to the DSP stream. Gated end to
-  end: the DSP's rendered frames equal the reference models', in real time.
+  end against the reference models, with independent playback timing checks.
 
 What it does not do yet: the 6510 has no ROMs, CIA, VIC or interrupts (PSID
 tunes with a play routine at a fixed rate only; no RSID, no interrupt-driven
 sample playback); no OSC3/ENV3 readback, second SID or NTSC timing; the 6581's
 filter distortion is not modelled; noise and combined waveforms are not
-band-limited; the stress traces (hard sync between all voices, random
-combined-waveform traffic) exceed real time.
+band-limited. Some real-tune passages and synthetic filter stress still
+exceed real time; the ring cannot absorb sustained overload.
 
 ## Build
 
@@ -88,7 +90,7 @@ with `/ucrt64/bin` on `PATH`; from a plain Git-bash some tools fail.
 | `make run` | run `f030sid.tos` in a Hatari window | Hatari |
 | `make ref-gate`, `make filter-gate` | the reference model against reSID (voices exactly, the filter by spectrum) | host C/C++, numpy, scipy |
 | `make dsp-gate` | the DSP kernel against the reference, frame by frame, bit for bit | Hatari |
-| `make stream-gate` | the same through the SSI stream: bit-exact and in real time | Hatari |
+| `make stream-gate` | compare SSI stream output and timing; stress mode allows timing failures | Hatari |
 | `make cpu-gate`, `make cpu-ref-check` | the 68030 6510 core against the C reference core; that core against libsidplayfp | Hatari; `make trace` |
 | `make coef-gate` | the 68030 filter coefficient routine against the C one | Hatari |
 | `make play-gate` | the player end to end: PSID in, the DSP's frames out | Hatari |
@@ -126,4 +128,4 @@ Outputs land in `release/`: `f030sid.tos`, `f030sid.ttp`, `sidmenu.tos`, `sid.lo
   [`player.md`](docs/player.md), [`hatari-timing.md`](docs/hatari-timing.md)
   (why the calibrated Hatari), [`dsp56001-notes.md`](docs/dsp56001-notes.md),
   [`sid-feasibility.md`](docs/sid-feasibility.md); [`architecture.md`](docs/architecture.md)
-  is the original plan.
+  describes the current processor split and verification.

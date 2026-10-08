@@ -1,5 +1,12 @@
 # Hints from the ScummVM DSP AdLib (OPL) emulator
 
+This is background from the ScummVM OPL and sibling FM projects, retained
+for design context. Their channel counts, protocols and measured costs are
+not F030SID results. The implemented SID design is described in
+[architecture.md](architecture.md) and [dsp-kernel.md](dsp-kernel.md); current
+playback limits are in [heavy-load-check.md](heavy-load-check.md).
+
+
 Source: `C:\Arbeit\scummvm`, mainly `devtools/atari-falcon030/tools/foa-opl3/`
 (README, `dsp/oplrt.asm`, `m68k/oplplay.s`, `opl-practical.h`, the gates) and
 `devtools/atari-falcon030/docs/opl3-feasibility.md`, plus the integration in

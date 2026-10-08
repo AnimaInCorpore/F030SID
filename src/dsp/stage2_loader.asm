@@ -2,7 +2,7 @@
 ;
 ; Dsp_ExecBoot installs this image in the DSP56001's 512-word internal P RAM.
 ; The first-stage reset vector jumps into the program gap left after the vector
-; table by the final YM2151 program, so that program can replace P:$0000,
+; table by the final SID program, so that program can replace P:$0000,
 ; P:$0010, and P:$0012 while the loader is still receiving its remaining
 ; P-memory sections.
 

@@ -21,10 +21,23 @@ Base address on the C64: `$D400`. Registers are write-only except `$19-$1C`.
 
 Clock: PAL 985,248 Hz, NTSC 1,022,727 Hz.
 
-This file will grow into the contract the DSP kernel is verified against, in
-the same role as `ym2151-ground-truth.md` in F030MXDRV: model differences
-(6581 vs 8580), combined waveforms, the ADSR bug, and the filter curves go
-here once they are pinned against reSID.
+## F030SID behavior
 
-The scaffold shadows all 32 offsets in X memory (`DSP_SID_REG_COUNT`) so that
-reads of `$19-$1C` can later be served from live voice 3 state.
+Playback uses the PAL clock only. The host aliases writes at `$D400–$D7FF`
+to the low five address bits and sends cycle-stamped writes to the DSP.
+The DSP shadows all 32 offsets for protocol `READ_REG`; this shadow is not
+live OSC3/ENV3/POT state. The 6510 environment returns zero on SID reads.
+External input, POT emulation and extra SID chips are not implemented.
+
+The [reference model](../src/ref/README.md) defines bulk-clocked voice behavior,
+6581/8580 DACs and combined-waveform tables, ADSR-delay behavior, hard sync,
+ring modulation and test-bit handling. Its filter is fitted to reSID's
+response (about 1.6 dB RMS across the measured modes), with no nonlinear
+6581 distortion. The DSP must match that reference's words exactly; the
+filter is not claimed to be bit-exact to reSID.
+
+Writes are applied before the frame containing their cycle, up to about
+20 microseconds early. Plain triangle, saw and pulse use sample-instant
+phase and polyBLEP edge correction. Noise, combined waveforms, ring-modulated
+triangle and test-bit output are not band-limited. See
+[dsp-kernel.md](dsp-kernel.md) for stream and protocol details.

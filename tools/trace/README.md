@@ -63,3 +63,8 @@ tunes, 18 of them famous, with the reasons. It lists paths into HVSC only;
 traces are written under `build/songs/` (ignored). No tune in this selection
 is multi-SID: the scanned composers' multi-SID tunes were not among the
 candidates, so 2SID/3SID needs a separate pick.
+
+The trace tool's full C64 scheduling is broader than the Falcon player's
+fixed-call environment. Successful RSID or multi-SID tracing does not imply
+F030SID playback support. For the current supported-tune comparison window
+and its limitations, see [the load check](../../docs/heavy-load-check.md).

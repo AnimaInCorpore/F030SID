@@ -20,10 +20,10 @@ the Falcon's own DAC at 49 kHz.
 This is a preview.  It has been built
 and tested under a DSP-calibrated
 Hatari only.  Nothing has run on a
-real Falcon yet.  Light tunes play as
-they should; many well known ones are
-still too much for the DSP and play
-too slowly, see WHICH TUNES PLAY.
+real Falcon yet.  Most tested tunes
+keep up for two minutes; Monofail
+still overtakes the renderer.  See
+WHICH TUNES PLAY.
 Reports are welcome.
 
 
@@ -32,6 +32,10 @@ FILES
   F030SID.TTP  the player
   DEMO.SID     a short demo tune
   README.TXT   this file
+
+SIDMENU.TOS is a separate source
+build with a nine-tune keyboard menu;
+it is not included in this ZIP.
 
 The player is one file.  The DSP
 program is inside it; there is no
@@ -143,35 +147,45 @@ speed or plays only in part.  It does
 no harm to try.
 
 Speed is the other limit.  The DSP
-has 326 cycles per sample and a busy
-tune needs more.  Then the sound
-stutters and the tune drags.  Twelve
-tunes were tried under Hatari, 30
-seconds each:
+has 326 cycles per sample.  A ring of
+4096 frames carries short busy parts;
+sustained overload can still stutter.
 
-  In time
-    Ocean Loader 2, Cybernoid II,
-    Last Ninja 2, DEMO.SID
+Latest check: 2026-10-05, calibrated
+Hatari, first 120 seconds of seventeen
+single-SID PSID tunes, default songs
+and each tune's selected chip model.
 
-  Nearly, a few short stutters
-    Turrican
+  Twelve pass timing in both modes
+    Commando, Cybernoid II, Monty on
+    the Run, Ocean Loader 2, Turrican,
+    Wizball, 808 Love, Comaland songs
+    1 and 4, Knucklebusters,
+    Lightforce, Thats the Way It Is
 
-  Too slow, by 3 to 20 percent
-    Commando, Ghouls 'n Ghosts,
-    Monty on the Run, Edge of
-    Disgrace, Wizball, RoboCop 3
+  Pacing fails, no overtakes
+    Last Ninja 2, Ghouls n Ghosts,
+    Edge of Disgrace, RoboCop 3
 
-  Not playable, RSID with samples
-    Great Giana Sisters, Tetris
+  Renderer overtakes
+    Monofail: five in normal playback,
+    seventeen with diagnostics
 
-In all ten PSID tunes the notes are
-right: the register writes equal
-libsidplayfp's and the samples equal
-the reference model's.  What is
-missing is DSP time.
+All seventeen diagnostic checksums
+match the reference.  This does not
+turn a timing failure into a pass.
+Monofail first overtakes between 60
+and 90 seconds.  These checks cover
+two minutes, not whole songs, every
+sub-song or real hardware.
+
+RSID sample tunes such as Great Giana
+Sisters and Tetris remain unsupported.
 
 There is no fade and no song length:
 a tune plays until a key or -t.
+Stopping can leave up to 73 ms of
+buffered audio unplayed.
 
 
 THE SOUND
@@ -197,9 +211,10 @@ UNDER THE HOOD
   PSID loader, a 6510 core with the
   stable undocumented opcodes, the
   filter coefficients, and the feed:
-  every SID write goes to the DSP with
-  its cycle stamp, two frames ahead of
-  the DSP's clock.
+  SID writes go to the DSP with their
+  cycle stamps, two frames ahead of
+  the DSP's clock.  Safe repeated
+  writes are omitted.
 
 DSP56001
   The SID itself, with a render-ahead
@@ -214,7 +229,8 @@ Verification
   for bit against reSID.  The player
   is checked end to end: the samples
   the DSP renders for a tune equal the
-  reference's, in real time.
+  reference's.  Timing and overtakes
+  are checked separately.
 
 
 CREDITS

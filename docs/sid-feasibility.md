@@ -1,4 +1,11 @@
-# Is high-quality SID emulation possible at 49 kHz on the Falcon DSP?
+# SID feasibility study (historical)
+
+This pre-implementation study retains analytical quality measurements and
+cycle estimates for design context. The SID kernel and player now exist;
+these estimates are not current performance results. See [DSP implementation](dsp-kernel.md),
+[reference-model measurements](../src/ref/README.md) and the
+[latest two-minute load check](heavy-load-check.md) for the current state.
+
 
 2026-10-02. Question: can the DSP56001 render a high-quality MOS 6581/8580
 SID at the codec's 49,169.92 kHz (prescale 1), 16-bit stereo, in real time?
@@ -24,10 +31,10 @@ non-authentic per-voice panning.
 Status of the evidence: the **aliasing, noise, filter and precision results
 below are measured** (scripts in `tools/feasibility/`, results committed). The
 **cycle costs are estimates** from instruction counting, calibrated against
-two measured DSP kernels in sibling projects. Nothing was assembled or run on
-the DSP here: this machine has no DOSBox or Hatari. The first implementation
-gate must be a profiled inner loop in the DSP-calibrated Hatari (see
-[Next steps](#next-steps)).
+two measured DSP kernels in sibling projects. At the time of this study the
+SID loop had not yet been assembled or profiled. Those estimates have since
+been superseded by the implemented kernel and measured tune gates (see
+[Implementation status](#implementation-status)).
 
 ## Budget
 
@@ -262,28 +269,14 @@ These refine `architecture.md` and `scummvm-opl-hints.md`:
   or more) put several writes per output frame through the event path.
 - **Licensing** of any reSID-derived tables (above).
 
-## Toolchain status
+## Implementation status
 
-The measuring loop now exists: `make profile-sid` assembles the DSP kernel (Motorola
-`asm56000` under DOSBox), boots it in the DSP-calibrated Hatari, and cycle-counts the
-code between two labels with Hatari's DSP profiler. Calibration check on the only code
-there is so far: the skeleton's 32-word register clear costs 36 instructions and 38.0
-instruction cycles, which is the hand count (setup, `rep` of 32 stores, `rts`; two cycles
-of loop setup). The cost figures in this document are still estimates until a real voice
-loop is profiled this way.
-
-## Next steps
-
-1. Write the 24-bit integer C reference for one voice + envelope + filter
-   (per `scummvm-opl-hints.md` section 2), gated against reSID on register
-   traces.
-2. Write the DSP inner loop for saw+envelope+polyBLEP-4 and the TPT filter;
-   profile it in the DSP-calibrated Hatari. This replaces the estimates above
-   with measurements; do it before anything else.
-3. Run `ratetest.tos` on a physical Falcon at prescale 1.
-4. Measure worst-case variants (3 noise voices, 3 combined waveforms, high
-   cutoff), then decide which 6581 extras fit.
-5. Listening comparison against reSID output for a handful of PSIDs.
+The three-voice kernel, fitted filter, band-limited output, 6510 host and SSI
+stream described as next steps in the original study have been implemented.
+The DSP/reference sample gates pass, while some tunes still miss playback
+deadlines. Physical-Falcon checks, complete-song performance and listening
+comparisons remain outstanding. Use the linked current docs for measured
+costs and supported features.
 
 ## Reproducing the measurements
 
