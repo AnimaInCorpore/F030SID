@@ -48,7 +48,9 @@ def main():
                 member.size, member.mtime, member.mode = len(content), epoch, 0o644
                 merged.addfile(member, io.BytesIO(content))
 
-    shutil.copyfile(output / 'f030sid.ttp', output / 'F030SID.TTP')
+    # Copy the tested package binary: the differently cased build/output names
+    # refer to the same path on case-insensitive macOS filesystems.
+    shutil.copyfile(ROOT / 'build/package/F030SID/F030SID.TTP', output / 'F030SID.TTP')
     names = ('F030SID.ZIP', 'F030SID.TTP', 'F030SID-SOURCE.tar.gz')
     checksums = ''.join(f'{hashlib.sha256((output / name).read_bytes()).hexdigest()}  {name}\n'
                         for name in names)
