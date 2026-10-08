@@ -30,7 +30,7 @@ still exceed the DSP's playback budget.
 
 The host and DSP communicate through a cycle-stamped register stream. A C
 reference model defines the synthesis output, and independent gates verify
-the host, DSP and playback timing. See [architecture](docs/architecture.md).
+the host, DSP and playback timing. See [processor split](docs/dsp-kernel.md#processor-split).
 
 ## Project status
 
@@ -48,8 +48,7 @@ checksums match the C reference; twelve tunes pass the complete player gate.
 Monofail records five transmitter overtakes in normal playback and seventeen
 with diagnostics. Four other tunes miss the 60 ms pacing tolerance without
 overtakes. These are emulator measurements, not a guarantee for complete
-songs or physical hardware. See [the load-check results](docs/heavy-load-check.md)
-and [real-time limits](docs/realtime.md).
+songs or physical hardware. See [performance results and limits](docs/performance.md).
 
 `release/sidmenu.tos` provides a separate nine-tune keyboard menu using
 `MENU.INF`; it is built by `make all` but is not included in the ZIP.
@@ -89,7 +88,7 @@ Dependencies:
   tables); a C++ compiler, Perl, numpy and scipy for reference-model gates;
 - DOSBox Staging (or a DOSBox that accepts its flags) to run the DSP assembler;
 - Hatari for emulator targets, the DSP-calibrated build described in
-  [`docs/hatari-timing.md`](docs/hatari-timing.md). Set `HATARI` explicitly
+  [`docs/performance.md`](docs/performance.md). Set `HATARI` explicitly
   to the calibrated executable for reproducible timing checks.
 
 ```sh
@@ -155,11 +154,11 @@ Outputs land in `release/`: `f030sid.tos`, `f030sid.ttp`, `sidmenu.tos`, `sid.lo
   `tools/dsp/`: the DSP gates and profilers; `tools/player/`: the 6510 reference
   core, exercisers and the player's gates; `tools/trace/`: `sidtrace`.
 - `tests/traces/`: register traces the gates replay; `tests/psid/`: test tunes.
-- `docs/`: [`dsp-kernel.md`](docs/dsp-kernel.md) (the kernel, the stream, costs),
-  [`player.md`](docs/player.md), [`hatari-timing.md`](docs/hatari-timing.md)
-  (why the calibrated Hatari), [`dsp56001-notes.md`](docs/dsp56001-notes.md),
-  [`sid-feasibility.md`](docs/sid-feasibility.md); [`architecture.md`](docs/architecture.md)
-  describes the current processor split and verification.
+- `docs/`: [player usage](docs/player.md),
+  [DSP implementation and register map](docs/dsp-kernel.md),
+  [performance, validation and emulator timing](docs/performance.md),
+  [quality measurements](docs/quality.md), and
+  [release downloads and packaging](docs/releases.md).
 
 ## Foundations and acknowledgements
 
@@ -188,7 +187,7 @@ F030SID builds on the following work:
   assembler/linker sources and DSP build assets. Motorola ASM56000, vasm/vlink,
   DOSBox and Hatari support the build and emulator checks. Their use and
   required configuration are documented above and in
-  [Hatari timing](docs/hatari-timing.md).
+  [emulator timing](docs/performance.md#emulator-timing).
 
 The reSID-derived code and waveform data carry upstream GPL terms; the host
 reference and trace tools also use GPL code. Preserve upstream copyright and

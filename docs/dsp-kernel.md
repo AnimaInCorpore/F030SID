@@ -5,6 +5,23 @@ mixer and SSI stream on the DSP56001. It is generated from one per-voice
 source template and gated bit for bit against the [C reference](../src/ref/README.md).
 The current host/DSP protocol is v11.
 
+## Processor split
+
+F030SID uses one SID kernel for both frame verification and SSI playback.
+The host executes the tune; the DSP synthesizes the chip output.
+
+| Processor | Responsibilities |
+| --- | --- |
+| 68030 | Load the tune, maintain 64 KB RAM, execute init/play routines, timestamp SID writes, derive filter coefficients, feed the DSP, handle keys and release sound/DSP locks |
+| DSP56001 | Three SID voices, envelopes, waveforms, sync/ring/test behavior, filter and mixer, render clock, write queue, SSI output |
+
+The host boots the embedded DSP image and uploads its model tables before
+feeding ordered cycle-stamped writes and a render horizon. The player controls
+startup, keyboard handling and shutdown; see [player behavior](player.md).
+The host core, filter coefficient routine and DSP output have independent
+reference gates, described in [player tools](../tools/player/README.md) and
+[the C reference](../src/ref/README.md).
+
 ## Synthesis
 
 The PAL clock is 985,248 Hz; the codec clock is 25175000 / 512 Hz.
@@ -101,7 +118,7 @@ Startup clears BCR for zero external-memory wait states.
 | Y external | $1c00–$2bff, $2c00–$3bff | Combined tables 3 and 5 |
 
 External P aliases external Y in the Falcon mapping used by Hatari. Program
-and Y table reservations must not overlap. See [DSP constraints](dsp56001-notes.md).
+and Y table reservations must not overlap. See [DSP constraints](#dsp56001-constraints).
 
 ## SSI stream
 
@@ -169,7 +186,82 @@ extended stress check, all twenty outputs match, eighteen meet timing, and
 so a printed PASS does not mean every trace holds real time.
 
 The frame budget is 326.3 DSP cycles including transport and interrupts.
-[Real-time notes](realtime.md) describe the current optimized
-paths; [two-minute tune results](heavy-load-check.md) establish the measured
-limits, including Monofail's sustained overload. Physical-Falcon validation
-and whole-song performance remain open.
+[Performance and validation](performance.md) describes the optimized paths
+and two-minute tune results, including Monofail's sustained overload.
+Physical-Falcon validation and whole-song performance remain open.
+
+## SID registers
+
+Base address on the C64: `$D400`. Registers are write-only except `$19-$1C`.
+
+| Offset | Register | Notes |
+| --- | --- | --- |
+| `$00-$01` | Voice 1 frequency lo/hi | `f = value * clock / 2^24` Hz |
+| `$02-$03` | Voice 1 pulse width lo/hi | 12 bits |
+| `$04` | Voice 1 control | bit0 gate, 1 sync, 2 ring, 3 test, 4 triangle, 5 saw, 6 pulse, 7 noise |
+| `$05` | Voice 1 attack/decay | high nibble attack, low nibble decay |
+| `$06` | Voice 1 sustain/release | high nibble sustain, low nibble release |
+| `$07-$0D` | Voice 2 | same layout as voice 1 |
+| `$0E-$14` | Voice 3 | same layout as voice 1 |
+| `$15-$16` | Filter cutoff | 11 bits: `$15` low 3 bits, `$16` high 8 bits |
+| `$17` | Resonance / filter routing | high nibble resonance, bit0-2 route voices 1-3, bit3 external |
+| `$18` | Mode / volume | bit4 LP, 5 BP, 6 HP, 7 voice 3 off; low nibble volume |
+| `$19` | POTX | read-only |
+| `$1A` | POTY | read-only |
+| `$1B` | OSC3 | read-only, voice 3 waveform output high 8 bits |
+| `$1C` | ENV3 | read-only, voice 3 envelope |
+
+Clock: PAL 985,248 Hz, NTSC 1,022,727 Hz.
+
+F030SID uses PAL timing only. The host aliases SID writes at `$D400–$D7FF`
+to the low five address bits. Protocol `READ_REG` returns the DSP's register
+shadow; it does not provide live OSC3/ENV3/POT state. The 6510 environment
+returns zero on SID reads. External input and extra SID chips are unsupported.
+
+## DSP56001 constraints
+
+The architectural reference is the local [DSP56001 manual](DSP56001_um.pdf).
+These rules apply to `src/dsp/sid.asm.in` and the embedded loader.
+
+### Arithmetic
+
+Data words are signed 24-bit fractions; MPY/MAC align their products in the
+56-bit accumulator. Integer state uses explicit shifts and scaling. Phase
+and filter integrators use paired X/Y words with `L:` moves. The output's
+`rnd` rounds exact ties to even; the C reference's `mix_output` follows that
+rule. A matching voice gate alone does not verify final mixer rounding.
+
+A test of an accumulator sees its fractional bits too. When testing an
+integer result after multiplication, remove the fraction where the algorithm
+requires it. Changes to arithmetic must pass the bit-exact DSP/reference gate.
+
+### Address generation
+
+An indirect access needs one independent instruction cycle after writing its
+address register (manual section 8.1, pipeline Case 2). Use a useful instruction
+or a NOP to satisfy this delay. Indexed and post-update addressing pair
+same-numbered registers: `(Rn+Nn)` and `(Rn)+Nn` exist; `(R7+N5)` does not.
+Address arithmetic uses the pointer's own modifier register, so helpers must
+preserve the caller's modulo configuration.
+
+There is no register-plus-immediate-offset address mode. The source generator
+instantiates each voice with absolute state addresses and suffixed labels,
+allowing short moves and jumps in the common frame path.
+
+### Loops and interrupts
+
+`DO` and `REP` with a zero count execute 65,536 iterations. Guard counts that
+may be zero. Motorola ASM56000 checks instruction restrictions near hardware
+loop endpoints (manual section 8.1.2 and instruction descriptions).
+
+The SSI transmitter uses a two-word fast interrupt. It must leave condition
+codes intact: toggling an offset with `bchg` changed carry and failed the
+stream gate. The current interrupt reads alternating offsets 0 and 1 through
+`r7`, sending each mono ring word twice without changing flags.
+
+The loader stream uses magic `$4d584c`, followed by section count and
+address/count/data records. It replies `$4c4f41` and jumps through the installed
+reset vector. `tools/generate_dsp_stage2.py` rejects invalid sections,
+bootstrap overflow, loader overlap and sections past P:$1c00. The memory
+mapping and zero-wait-state setup described above still need physical-Falcon
+validation.

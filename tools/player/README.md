@@ -69,7 +69,7 @@ can select longer windows, separate build directories and parallel instances.
 `fetch_heavy_corpus.py` downloads/verifies the SHA-256-pinned workload in
 `tests/heavy-corpus.json` under ignored `music/`. It includes unsupported
 RSID and multi-SID examples; exclude those from claims about supported playback.
-The [latest two-minute check](../../docs/heavy-load-check.md) records the
+The [latest two-minute check](../../docs/performance.md#two-minute-load-check) records the
 seventeen supported inputs, checksum matches, pacing failures and Monofail's
 overtakes. `make_exerciser.py`, `make_trace_sid.py` and `make_demo_trace.py`
 produce synthetic tunes for reproducible gates without a downloaded corpus.

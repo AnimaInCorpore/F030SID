@@ -67,7 +67,7 @@ candidates, so 2SID/3SID needs a separate pick.
 The trace tool's full C64 scheduling is broader than the Falcon player's
 fixed-call environment. Successful RSID or multi-SID tracing does not imply
 F030SID playback support. For the current supported-tune comparison window
-and its limitations, see [the load check](../../docs/heavy-load-check.md).
+and its limitations, see [the load check](../../docs/performance.md#two-minute-load-check).
 
 This selection ranks workloads; it is not a list of tunes verified to play
 correctly or in real time on F030SID.

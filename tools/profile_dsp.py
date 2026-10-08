@@ -15,7 +15,7 @@
 
 The listing is Motorola's .LST (`SID.LST` etc.). The cycle model is Hatari's:
 zero wait states on external memory, two extra cycles for an instruction that
-touches two external spaces. Use the DSP-calibrated build (docs/hatari-timing.md)
+touches two external spaces. Use the DSP-calibrated build (docs/performance.md)
 for anything involving real time; the cycle counts themselves do not depend on
 the calibration.
 """

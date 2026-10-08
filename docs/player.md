@@ -66,7 +66,7 @@ it; `make package` does not include it in `F030SID.ZIP`.
 
 ## Playback status
 
-The latest [two-minute check](heavy-load-check.md), dated 2026-10-05, runs
+The latest [two-minute check](performance.md#two-minute-load-check), dated 2026-10-05, runs
 seventeen single-SID PSIDs with their default subsong and header-selected
 model. All diagnostic checksums and render clocks match the reference.
 Twelve tunes pass both normal and diagnostic gates. Monofail has five normal
@@ -84,7 +84,7 @@ between 60 and 90 seconds. Nothing has run on a physical Falcon.
 The [core specification](../tools/player/README.md) defines RAM, opcodes,
 raster reads and the call schedule. ROM calls, banking, CIA/VIC interrupts,
 interrupt-driven digis, NTSC, live OSC3/ENV3 reads and extra SIDs are unsupported.
-[Real-time notes](realtime.md) explain synthesis limits and buffering.
+[Playback limits and optimizations](performance.md#remaining-deadlines) explain synthesis limits and buffering.
 
 `make cpu-ref-check`, `make cpu-gate` and `make coef-gate` verify the host
 components. `make play-gate` checks generated tunes end to end;

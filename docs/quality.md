@@ -21,7 +21,7 @@ tables, exact bulk-clocked envelopes and sync, and a fitted TPT filter with
 
 The measured implementation supersedes the original paper cycle estimates.
 Some passages exceed the budget even after optimization. In the
-[latest two-minute load check](heavy-load-check.md), twelve of seventeen tunes
+[latest two-minute load check](performance.md#two-minute-load-check), twelve of seventeen tunes
 pass both playback modes; Monofail overtakes and four other tunes miss pacing.
 The ring absorbs short spikes, not sustained overload. Two SIDs and nonlinear
 6581 filter distortion are not implemented.
@@ -155,7 +155,7 @@ full nonlinear circuit.
 Physical-Falcon rate/bus checks, listening comparisons, complete songs and
 all subsongs remain outstanding. High register-write rates, combined waveforms,
 sync and noise require whole-stream timing checks as well as output checks.
-Use [real-time notes](realtime.md) for the current optimized paths and limits.
+Use [performance notes](performance.md#current-optimizations) for the current optimized paths and limits.
 
 ## Reproducing the measurements
 

@@ -161,4 +161,4 @@ directory is derived from them.
 
 The final chip output follows the DSP's tie-to-even rounding. Bit-exact output
 and real-time playback are separate checks; the latest player timing results
-are in [the two-minute load check](../../docs/heavy-load-check.md).
+are in [the two-minute load check](../../docs/performance.md#two-minute-load-check).

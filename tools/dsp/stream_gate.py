@@ -16,7 +16,7 @@ ahead, the DSP renders ahead into its ring. The run passes when
     transmitter, not free-running); the least ring fill seen is reported (the ring's target is 3584
     frames: the margin left at the worst moment).
 
-Real-time results need the DSP-calibrated Hatari (docs/hatari-timing.md).
+Real-time results need the DSP-calibrated Hatari (docs/performance.md).
 
   stream_gate.py --vasm V --vlink L --hatari H --tos ROM [--jobs N] [--stress] [traces...]
 """

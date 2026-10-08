@@ -38,7 +38,7 @@ DOSBOX_FLAGS ?= --noprimaryconf --set output=texture
 
 # Hatari selection. Stock Hatari runs the Falcon DSP at twice the hardware
 # clock, so real-time results need the DSP-calibrated build from the
-# F030Arcade tree; see docs/hatari-timing.md. Override either variable:
+# F030Arcade tree; see docs/performance.md. Override either variable:
 #   make <target> F030ARCADE=/path/to/F030Arcade
 #   make <target> HATARI=/path/to/hatari
 # Keep the candidate search in step with tools/hatari_binary.py.
@@ -60,7 +60,7 @@ define require_hatari
 	fi
 	@if [ "$(abspath $(HATARI))" != "$(abspath $(HATARI_CALIBRATED))" ]; then \
 		echo "warning: $(HATARI) is not the DSP-calibrated build; real-time" >&2; \
-		echo "         results will describe a 32 MIPS DSP - see docs/hatari-timing.md" >&2; \
+		echo "         results will describe a 32 MIPS DSP - see docs/performance.md" >&2; \
 	fi
 endef
 

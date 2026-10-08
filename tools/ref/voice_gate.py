@@ -13,7 +13,7 @@
    voice at the integer cycle, reSID's fast mode) and its `bl` output
    (sample-instant phase plus 4-point polyBLEP) are graded by the in-band
    power of everything that is not a harmonic of the note, relative to the
-   note: the aliasing figure of docs/sid-feasibility.md, here measured on the
+   note: the aliasing figure of docs/quality.md, here measured on the
    real DAC, envelope and frame timing rather than an idealised waveform.
 
 Usage: voice_gate.py [--build build/ref] [--quick]

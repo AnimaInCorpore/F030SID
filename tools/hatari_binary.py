@@ -4,7 +4,7 @@ Stock Hatari grants the Falcon DSP twice the cycles the hardware has (32 MIPS
 instead of 16) and models the CPU-to-DSP host port at 72-174 % of hardware
 speed, so any throughput or real-time result taken from it describes a machine
 that does not exist. The DSP-calibrated build in the F030Arcade tree fixes both
-and is the default here; see docs/hatari-timing.md.
+and is the default here; see docs/performance.md.
 
 Resolution order: the ``HATARI`` environment variable, then a calibrated build
 under ``F030ARCADE``, ``~/Work/F030Arcade`` or a sibling of this repository,

@@ -24,7 +24,7 @@ other tunes, supply their `.sid` filename. See [the player docs](player.md).
 
 TOS 4.02 is the emulator-tested configuration; other TOS versions and physical
 Falcon playback have not been verified. Single-SID PAL PSID tunes are supported,
-subject to the measured [playback limits](heavy-load-check.md). RSID,
+subject to the measured [playback limits](performance.md#two-minute-load-check). RSID,
 interrupt-driven digis, NTSC and extra SIDs remain unsupported.
 
 ## Validation of v0.1
@@ -35,7 +35,7 @@ passes both 6581 and 8580 for 32 seconds: 1,573,438 frames per model,
 reference checksums and no overtakes or SSI underrun flag. The published
 player's SHA-256 is
 `0ec20ffef469928b38275079924a5fc02dbba5f060f2e8c14ef4e3ec56f7072b`,
-matching the player used for the [2026-10-05 load check](heavy-load-check.md).
+matching the player used for the [2026-10-05 load check](performance.md#two-minute-load-check).
 These are emulator checks, not physical-Falcon validation.
 
 ## Preparing a release
