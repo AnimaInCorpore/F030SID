@@ -5,9 +5,17 @@
 
 Preview release v0.1
 
-Plays Commodore 64 music files (.sid,
-the PSID format of the High Voltage
-SID Collection) on a Falcon030.
+F030SID.TTP is a TOS Takes Parameters
+player for Commodore 64 .sid music
+files on the Atari Falcon030.  Start
+it from the desktop or a shell and
+pass the tune filename.
+
+Supported files are single-SID PAL
+PSID tunes.  RSID, interrupt-driven
+samples, NTSC and extra SIDs are not
+supported.  Some demanding tunes
+still exceed the DSP playback budget.
 
 The 68030 runs the tune's original
 6510 code.  The DSP56001 emulates the

@@ -1,9 +1,18 @@
 # F030SID
 
-F030SID plays Commodore 64 SID music (single-SID PAL PSID) on an Atari
-Falcon. The 68030 hosts the tune (a 6502 core plus the C64 memory map that PSID players need) and
-the Falcon DSP56001 emulates the MOS 6581/8580 SID and feeds 16-bit stereo
-audio to the Falcon DAC.
+F030SID builds **`F030SID.TTP`**, a command-line player for Commodore 64
+`.sid` music files on the Atari Falcon030. Run it from the TOS desktop's
+parameter dialog or a shell:
+
+```text
+F030SID.TTP tune.sid
+```
+
+The 68030 executes the tune's original 6510 code; the DSP56001 emulates the
+MOS 6581/8580 SID and feeds 16-bit stereo audio to the Falcon DAC. Current
+playback support is **single-SID PAL PSID**. RSID, interrupt-driven sample
+playback, NTSC timing and multiple SIDs are unsupported; some demanding tunes
+still exceed the DSP's playback budget.
 
 The host and DSP communicate through a cycle-stamped register stream. A C
 reference model defines the synthesis output, and independent gates verify

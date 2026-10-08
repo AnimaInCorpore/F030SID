@@ -1,5 +1,11 @@
 # The SID player
 
+The project's main executable is **`F030SID.TTP`**, a TOS Takes Parameters
+program for playing `.sid` files on the Atari Falcon030. `make all` builds
+it as `release/f030sid.ttp`; `make package` distributes it as `F030SID.TTP`
+inside `release/F030SID.ZIP`. Start it from the desktop parameter dialog or
+a shell, passing the tune filename.
+
 `release/f030sid.ttp` runs the tune's 6510 code on the 68030 and sends
 cycle-stamped SID writes and filter coefficients to the DSP's protocol v11
 stream. Supported playback is single-SID PAL PSID with a play routine called
