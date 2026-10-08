@@ -129,3 +129,38 @@ Outputs land in `release/`: `f030sid.tos`, `f030sid.ttp`, `sidmenu.tos`, `sid.lo
   (why the calibrated Hatari), [`dsp56001-notes.md`](docs/dsp56001-notes.md),
   [`sid-feasibility.md`](docs/sid-feasibility.md); [`architecture.md`](docs/architecture.md)
   describes the current processor split and verification.
+
+## Foundations and acknowledgements
+
+F030SID builds on the following work:
+
+- **[reSID](https://github.com/libsidplayfp/resid)** by Dag Lem and its
+  contributors is the basis of the C reference model's oscillator, noise,
+  envelope, DAC and bulk-clocked sync behavior. The combined-waveform tables
+  come from reSID's sampled chip data. The host-side oracle runs reSID to
+  verify voice state and measure filter response; the Falcon DSP implements
+  the resulting reference behavior in its own fixed-point kernel.
+- **[libsidplayfp](https://github.com/libsidplayfp/libsidplayfp)** provides the
+  independent C64/6510 playback reference. `sidtrace` taps its ReSIDfp backend
+  to record cycle-stamped register writes, and the host-core gates compare
+  against those traces. The trace tool uses the SHA-256-pinned 2.16.1 release.
+- **[SIDPlayer](https://github.com/pschatzmann/SIDPlayer)** by Phil Schatzmann,
+  based on Hermit's cSID light, inspired the player API and load/init/play/render
+  organization. This is structural inspiration; F030SID's 68030 core and DSP
+  renderer are implemented here.
+- **Vadim Zavalishin's topology-preserving transform (TPT) filter formulation**
+  underlies the state-variable filter. F030SID derives its coefficients on
+  the host and fits cutoff, resonance and output gains to measured reSID
+  responses. Saw/pulse anti-aliasing uses four-point polyBLEP edge correction.
+- **Build and verification tools:** the bundled
+  [toolchain submodule](https://github.com/AnimaInCorpore/f030dsp3d) supplies
+  assembler/linker sources and DSP build assets. Motorola ASM56000, vasm/vlink,
+  DOSBox and Hatari support the build and emulator checks. Their use and
+  required configuration are documented above and in
+  [Hatari timing](docs/hatari-timing.md).
+
+The reSID-derived code and waveform data carry upstream GPL terms; the host
+reference and trace tools also use GPL code. Preserve upstream copyright and
+license notices with derived material. See [reference-model scope](src/ref/README.md)
+for the exact behavior adopted and the differences from cycle-by-cycle reSID.
+SID music remains the work of its respective authors.

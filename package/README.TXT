@@ -243,11 +243,41 @@ Programming
   and the DSP56001 code and the
   reference models
 
-SID reference and waveform tables
-  reSID by Dag Lem, and libsidplayfp.
-  The combined waveform tables in the
-  player come from reSID's chip
-  samples (GPL).
+SID model and waveform tables
+  reSID by Dag Lem and contributors.
+  Oscillator, noise, envelope, DAC and
+  sync behavior follow its bulk clock.
+  Combined waveform tables come from
+  its sampled chip data (GPL).
+  reSID also verifies the host model
+  and supplies measured filter targets.
+
+C64 playback reference
+  libsidplayfp and its contributors.
+  The trace tools use its C64/6510
+  player and ReSIDfp backend to check
+  register writes independently.
+
+Player organization
+  SIDPlayer by Phil Schatzmann,
+  based on Hermit's cSID light,
+  inspired the load/init/play/render
+  API and program organization.
+
+Filter and band-limiting
+  Vadim Zavalishin's TPT formulation
+  underlies the state-variable filter.
+  Saw/pulse edges use four-point
+  polyBLEP correction.
+
+Build and verification
+  Motorola ASM56000, vasm/vlink,
+  DOSBox and DSP-calibrated Hatari.
+
+Upstream notices
+  Preserve the copyright and license
+  notices for reSID-derived code and
+  tables and GPL reference tools.
 
 Source and documentation
   github.com/AnimaInCorpore/F030SID
