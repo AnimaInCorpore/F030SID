@@ -49,8 +49,11 @@ def main():
                 merged.addfile(member, io.BytesIO(content))
 
     # Copy the tested package binary: the differently cased build/output names
-    # refer to the same path on case-insensitive macOS filesystems.
-    shutil.copyfile(ROOT / 'build/package/F030SID/F030SID.TTP', output / 'F030SID.TTP')
+    # refer to the same path on case-insensitive macOS filesystems. Keep its
+    # time: there the copy is release/f030sid.ttp, the ZIP's prerequisite, and a
+    # newer time would make a later `make package-gate` rebuild the ZIP after
+    # its checksum is written (v0.2's first SHA256SUMS listed the older ZIP).
+    shutil.copy2(ROOT / 'build/package/F030SID/F030SID.TTP', output / 'F030SID.TTP')
     names = ('F030SID.ZIP', 'F030SID.TTP', 'F030SID-SOURCE.tar.gz')
     checksums = ''.join(f'{hashlib.sha256((output / name).read_bytes()).hexdigest()}  {name}\n'
                         for name in names)
