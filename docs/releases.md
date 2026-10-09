@@ -2,8 +2,11 @@
 
 [GitHub Releases](https://github.com/AnimaInCorpore/F030SID/releases) provides
 prebuilt downloads so a Falcon user does not need the assembler toolchain.
-The current published release is [v0.1](https://github.com/AnimaInCorpore/F030SID/releases/tag/v0.1),
-created on 2026-10-08 at commit `4781be06dfb8a62fa90ab1aee14b6d33e5d1184f`.
+The current published release is [v0.2](https://github.com/AnimaInCorpore/F030SID/releases/tag/v0.2),
+created on 2026-10-09 at commit `1e6b1a970e48fcd4f394a0ee648835d196f81907`.
+It replaces [v0.1](https://github.com/AnimaInCorpore/F030SID/releases/tag/v0.1)
+(2026-10-08, commit `4781be06dfb8a62fa90ab1aee14b6d33e5d1184f`), whose player
+stays in supervisor mode and leaves FreeMiNT unresponsive.
 It is marked as a preview because physical hardware validation remains
 outstanding. The tag and assets describe that snapshot; current checkout
 documentation may include later corrections.
@@ -22,10 +25,34 @@ Falcon030 with DSP56001 and about 1 MB free RAM. Double-click `F030SID.TTP`
 and enter `DEMO.SID`; a shell can run `F030SID.TTP DEMO.SID` directly. For
 other tunes, supply their `.sid` filename. See [the player docs](player.md).
 
-TOS 4.02 is the emulator-tested configuration; other TOS versions and physical
+TOS 4.02 and FreeMiNT 1.19 without memory protection are the emulator-tested
+configurations; other TOS versions, MagiC, memory protection and physical
 Falcon playback have not been verified. Single-SID PAL PSID tunes are supported,
 subject to the measured [playback limits](performance.md#two-minute-load-check). RSID,
 interrupt-driven digis, NTSC and extra SIDs remain unsupported.
+
+## Validation of v0.2
+
+Built with `make release-assets` from a clean clone of commit `1e6b1a9` with
+both submodules at their recorded revisions (reSID `3bf8eff2`, f030dsp3d
+`9a87bd90`). `make package-gate` passes both 6581 and 8580 for 32 seconds:
+1,573,438 frames per model, 32.01 s of audio for 32.00 s of frames, minimum
+ring fill 3567 of 3584, matching reference checksums and no overtakes or SSI
+underrun flag. The published player's SHA-256 is
+`8303f11d0c433e49b2fc2fe14a4d42fabde3650b6151e09d93c3f615bc993e2c`, the player
+of the [2026-10-09 load check](performance.md#current-check-2026-10-09)
+(sixteen of seventeen tunes pass; Monofail has 4 and 15 overtakes). `stream-gate`
+and `dsp-gate` pass. The FreeMiNT measurements are in
+[the player docs](player.md#under-freemint). These are emulator checks, not
+physical-Falcon validation.
+
+The first `SHA256SUMS` uploaded with v0.2 listed a ZIP hash (`f8033468`) that did
+not match the published ZIP (`0e12c035`): `make package-gate` had rebuilt the
+ZIP, with identical files, after `release-assets` wrote the checksums. The
+file was replaced minutes after publication with the published assets'
+hashes; the ZIP, player and source archive were not changed.
+`tools/package_release.py` now keeps the copied player's time so the ZIP is
+not rebuilt.
 
 ## Validation of v0.1
 
