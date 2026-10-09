@@ -3,7 +3,7 @@
 `src/dsp/sid.asm.in` implements all three SID voices, the fitted filter,
 mixer and SSI stream on the DSP56001. It is generated from one per-voice
 source template and gated bit for bit against the [C reference](../src/ref/README.md).
-The current host/DSP protocol is v11.
+The current host/DSP protocol is v12.
 
 ## Processor split
 
@@ -113,7 +113,7 @@ Startup clears BCR for zero external-memory wait states.
 | X external | $0200–$03ff | Envelope DAC/period pairs |
 | X external | $0400–$13ff | Waveform DAC |
 | X external | $1400–$23ff | Combined tables 6 and 7 packed into lower/upper twelve bits |
-| X external | $2400–$26ff | 256-entry cycle/register/value queue |
+| X external | $2400–$2fff | 1024-entry cycle/register/value queue |
 | X external | $3000–$3fff | 4096-frame mono output ring |
 | Y external | $1c00–$2bff, $2c00–$3bff | Combined tables 3 and 5 |
 
@@ -126,21 +126,25 @@ and Y table reservations must not overlap. See [DSP constraints](#dsp56001-const
 A two-word fast interrupt reads the 4096-frame mono ring through `r3/m3`.
 Offsets 0 and 1 alternate via `r7`, sending each word as left and right.
 The command loop renders ahead until 3584 frames wait, or the host's released
-horizon prevents more rendering.
+horizon prevents more rendering. The first frame goes 256 frames (5.2 ms)
+ahead of the transmitter. Until 2026-10-09 it went one frame ahead, and the
+transmitter usually passed it while it was being computed, so every
+playback began with a whole ring (83 ms) of silence.
 
 `STREAM_PUSH count, (cycle, register, value)..., horizon` queues ordered writes
-with SID cycles modulo 2^24. The horizon is the cycle below which frames may
+(up to 1024) with SID cycles modulo 2^24. The horizon is the cycle below which frames may
 start; every write below horizon + 21 must already be supplied. A frame applies
 its due writes before clocking synthesis. Pseudo registers 32–39 carry the
 filter's eight coefficient words. Late feeding can interrupt continuity;
 the renderer does not silently run past the known write horizon.
 
-Status indices 0–6 report started, checksum, least ring fill in frames, queued
-entries, render clock, overtakes and SSI underrun flag. Overtakes are checked
+Status indices 0–7 report started, checksum, least ring fill in frames, queued
+entries, render clock, overtakes, SSI underrun flag and the ring fill now
+(v12; it was 0–6). Overtakes are checked
 at the next render step and when a host call ends a render run early.
 The checksum covers all three voices and the chip output.
 
-## Protocol v11
+## Protocol v12
 
 The authoritative definitions are `src/dsp/protocol.inc` and
 `src/m68k/protocol.i`; keep them synchronized. Commands exchange 24-bit words.
@@ -164,6 +168,73 @@ Every command returns one word except `FRAME`, which returns four.
 The host loads envelope entries as DAC << 13 plus exponential-counter period,
 and waveform DAC entries as (DAC − zero) << 10. `CONFIG` follows table loads.
 Normal playback uses `STREAM_PLAIN`; diagnostic playback retains the checksum.
+
+## Host transport
+
+The player sends each transaction (a command's words, then one reply word)
+with XBIOS `Dsp_BlkHandShake`, three bytes per word, so it needs no
+supervisor mode. `Dsp_BlkUnpacked` is only used for the stage-two load. TOS
+4.02's `Dsp_BlkUnpacked` tests TXDE before the first word of a block and
+then writes the rest without testing (its `dbf` loops back to the write, not
+to the test). That works only while the DSP sits in a tight receive loop,
+as the loader does. The kernel reads commands between frames, so a 96-word
+`STREAM_PUSH` lost its count word and the DSP waited for a horizon that had
+already gone by (Hatari host-port trace, 2026-10-09). F030MXDRV documents
+the same TOS behaviour (`docs/dsp56001-notes.md`).
+
+The DSP's side of a host word costs, by the DSP56001 User's Manual
+(Tables A-6, A-9, A-11, A-14; oscillator clocks, internal memory, no wait
+states), `jclr #0,x:m_hsr,*` 6 clocks per test and `movep x:m_hrx,x:(r1)+`
+4. Two clocks are one instruction cycle (Icyc; 16 million a second at
+32 MHz). A queued write is three words, so at least 15 Icyc of DSP time
+even when every word is already waiting, plus any time the DSP spends
+waiting for the 68030.
+
+## SSI receive route (assessed, not built)
+
+DMA playback can feed the DSP's SSI receiver through the crossbar while the
+transmitter keeps clocking the DAC. That would take the write stream off the
+host port. What is established, and where:
+
+- **Prior art.** ScummVM's `ssi-dma-c2p` tools (branch `ssi-dma-c2p-test`,
+  `devtools/atari-falcon030/tools/ssi-dma-c2p`) run DMA playback into the DSP
+  free-running at 25.175 MHz, and `SSIMIX.TOS` shares one stream between the
+  DAC (one slot pair, chosen by `Setmontracks`) and data (the other slots).
+  F030SMK (notes in F030CT's `analysis/porting-notes.md`) runs it in handshake
+  mode, where the DSP requests each word on SC1. Handshake mode has been run
+  without sound only. All of it is under Hatari only.
+- **Hatari loses words in free-running mode.** It runs the DSP only between
+  68030 instructions, so an instruction longer than one slot hands over two
+  words back to back. Hatari then overwrites RX with the newer word, never
+  sets ROE and always raises the plain receive vector (`dsp_core.c`, marked
+  as a hack). The F030SID gates are bit-exact, and the 68030 is never idle
+  during playback, so a free-running stream cannot be gated in a stock
+  Hatari.
+- **The hardware behaves differently, by the manual (§11.3.2.3.6).** On an
+  overrun the *new* word is not transferred, ROE is set, and the next
+  receive interrupt goes to `P:$000E`; reading SSISR and then RX clears ROE.
+  A loss is therefore detectable on a real Falcon.
+- **Interrupt cost.** A two-`movep` fast receive interrupt is 8 clocks
+  (4 Icyc), which matches ScummVM's measured 4 per slot. One stereo track
+  is 2 slots a frame: 98,340 interrupts a second, 0.39 M Icyc, 2.5% of the DSP.
+  Four tracks (SSIMIX's layout) cost four times that.
+- **Slot time.** A 49,170 Hz frame is 650.8 clocks (325.4 Icyc). With 2
+  slots a frame a slot lasts 162.7 Icyc, with 8 slots 40.7. Fast interrupts
+  and `REP` are not interruptible (manual §8, `REP`). The longest `REP`
+  reachable while streaming is `rep #24` in `bc_hit` and `bl_recip` (about
+  26 Icyc). The long ones are in `reset_state` and `cmd_stream_start`, which
+  run before the stream starts. By the code, the kernel could therefore take a
+  receive interrupt within one slot on hardware. That has not been measured.
+- **Break-even.** At 2.5% fixed against at least 15 Icyc a write, the route
+  saves DSP time only above about 26,000 writes a second. 808 Love sends
+  about 4,900 before repeat removal ([performance](performance.md#current-optimizations)).
+  Monofail's rate has not been counted.
+
+Open questions for hardware: whether handshaked receive and audio-rate
+transmit can share the SSI, the crossbar's true-colour starvation of
+non-handshaked DMA (a stream then needs sequence numbers and a check), and
+the crossbar's external clock limit (the manual gives only the internal
+maximum, fosc/4 = 8 Mbit/s; 8 slots at 49,170 Hz are 6.29 Mbit/s).
 
 ## Gates and performance
 
@@ -251,7 +322,9 @@ allowing short moves and jumps in the common frame path.
 ### Loops and interrupts
 
 `DO` and `REP` with a zero count execute 65,536 iterations. Guard counts that
-may be zero. Motorola ASM56000 checks instruction restrictions near hardware
+may be zero. `REP` is not interruptible, nor are consecutive `REP`s: an
+SSI interrupt waits until the repeat ends, so keep long repeats out of the
+streaming path. Motorola ASM56000 checks instruction restrictions near hardware
 loop endpoints (manual section 8.1.2 and instruction descriptions).
 
 The SSI transmitter uses a two-word fast interrupt. It must leave condition

@@ -6,6 +6,12 @@
         addq.l  #2,sp
         endm
 
+        macro   Crawcin
+        move.w  #7,-(sp)
+        trap    #1
+        addq.l  #2,sp
+        endm
+
         macro   Cconis
         move.w  #11,-(sp)
         trap    #1
@@ -178,6 +184,12 @@
         lea     12(sp),sp
         endm
 
+        macro   Dsp_Lock
+        move.w  #104,-(sp)
+        trap    #14
+        addq.l  #2,sp
+        endm
+
         macro   Dsp_Unlock
         move.w  #105,-(sp)
         trap    #14
@@ -215,6 +227,16 @@
 
 ; Transfer 24-bit DSP words held in 32-bit 68030 slots. Dsp_BlkWords (XBIOS
 ; 123) is not suitable here: it expands 16-bit CPU words to DSP words.
+        macro   Dsp_BlkHandShake input,input_count,output,output_count
+        move.l  \4,-(sp)
+        pea     \3
+        move.l  \2,-(sp)
+        pea     \1
+        move.w  #97,-(sp)
+        trap    #14
+        lea     18(sp),sp
+        endm
+
         macro   Dsp_BlkUnpacked input,input_count,output,output_count
         move.l  \4,-(sp)
         pea     \3

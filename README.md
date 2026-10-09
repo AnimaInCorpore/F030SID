@@ -42,12 +42,12 @@ Its packaged demo passes the 32-second player gate on both SID models. All
 playback validation is from DSP-calibrated Hatari; no F030SID build has run
 on a physical Falcon.
 
-The latest load check (2026-10-05) covers the first 120 seconds of seventeen
+The latest load check (2026-10-09) covers the first 120 seconds of seventeen
 single-SID PSIDs in both normal and diagnostic playback. All seventeen
-checksums match the C reference; twelve tunes pass the complete player gate.
-Monofail records five transmitter overtakes in normal playback and seventeen
-with diagnostics. Four other tunes miss the 60 ms pacing tolerance without
-overtakes. These are emulator measurements, not a guarantee for complete
+checksums match the C reference; sixteen tunes pass the complete player gate.
+Monofail records four transmitter overtakes in normal playback and fifteen
+with diagnostics. The pacing check now times the audio itself; by the old
+measure, which counted each tune's init routine, four more tunes failed. These are emulator measurements, not a guarantee for complete
 songs or physical hardware. See [performance results and limits](docs/performance.md).
 
 `release/sidmenu.tos` provides a separate nine-tune keyboard menu using
@@ -67,6 +67,10 @@ What exists:
   [`tools/player/README.md`](tools/player/README.md)): PSID loader, a 6510 core,
   the filter coefficient derivation, the feed to the DSP stream. Gated end to
   end against the reference models, with independent playback timing checks.
+  The current source runs as an ordinary user-mode process, so it also plays
+  under FreeMiNT, which has been tested only in Hatari
+  ([under FreeMiNT](docs/player.md#under-freemint)). The v0.1 binary
+  stays in supervisor mode and leaves FreeMiNT unresponsive while it plays.
 
 What it does not do yet: the 6510 has no ROMs, CIA, VIC or interrupts (PSID
 tunes with a play routine at a fixed rate only; no RSID, no interrupt-driven

@@ -3,7 +3,7 @@
   for the Atari Falcon030
 ========================================
 
-Preview release v0.1
+Preview release v0.2
 
 F030SID.TTP is a TOS Takes Parameters
 player for Commodore 64 .sid music
@@ -61,7 +61,8 @@ About 1 MB of free RAM.
 
 TOS 4.02 is what it was tested with,
 under Hatari.  Other TOS versions are
-untried.
+untried.  It also runs under FreeMiNT,
+see FREEMINT.
 
 No accelerator needed.  The code is
 plain 68030 code for a stock 16 MHz
@@ -123,6 +124,27 @@ DSP busy) the player says so and waits
 for a key.
 
 
+FREEMINT
+--------
+The player is an ordinary program: it
+never stays in supervisor mode, sleeps
+between its work, and locks the DSP
+and the sound system while it plays.
+Under FreeMiNT the desktop and other
+programs keep running.  SIGINT, SIGTERM,
+SIGQUIT and SIGHUP stop it like a key.
+
+Tested only under Hatari with FreeMiNT
+1.19 and memory protection off.  A
+light tune takes about a fifth of the
+CPU there.  A heavy tune such as
+Monofail needs about four fifths of
+it: beside another program that wants
+all the CPU it falls behind and
+stutters.  Beside an idle desktop it
+plays.
+
+
 WHICH TUNES PLAY
 ----------------
 Not every .sid plays yet.  What works
@@ -160,33 +182,32 @@ has 326 cycles per sample.  A ring of
 4096 frames carries short busy parts;
 sustained overload can still stutter.
 
-Latest check: 2026-10-05, calibrated
+Latest check: 2026-10-09, calibrated
 Hatari, first 120 seconds of seventeen
 single-SID PSID tunes, default songs
 and each tune's selected chip model.
 
-  Twelve pass timing in both modes
-    Commando, Cybernoid II, Monty on
-    the Run, Ocean Loader 2, Turrican,
+  Sixteen pass timing in both modes
+    Commando, Cybernoid II, Edge of
+    Disgrace, Ghouls n Ghosts, Last
+    Ninja 2, Monty on the Run, Ocean
+    Loader 2, RoboCop 3, Turrican,
     Wizball, 808 Love, Comaland songs
     1 and 4, Knucklebusters,
     Lightforce, Thats the Way It Is
 
-  Pacing fails, no overtakes
-    Last Ninja 2, Ghouls n Ghosts,
-    Edge of Disgrace, RoboCop 3
-
   Renderer overtakes
-    Monofail: five in normal playback,
-    seventeen with diagnostics
+    Monofail: four in normal playback,
+    fifteen with diagnostics
 
 All seventeen diagnostic checksums
-match the reference.  This does not
-turn a timing failure into a pass.
-Monofail first overtakes between 60
-and 90 seconds.  These checks cover
-two minutes, not whole songs, every
-sub-song or real hardware.
+match the reference.  The timing now
+measures the music itself; v0.1's
+check also counted each tune's start
+and failed four of these on it.
+These checks cover two minutes, not
+whole songs, every sub-song or real
+hardware.
 
 RSID sample tunes such as Great Giana
 Sisters and Tetris remain unsupported.
@@ -225,8 +246,8 @@ UNDER THE HOOD
   stable undocumented opcodes, the
   filter coefficients, and the feed:
   SID writes go to the DSP with their
-  cycle stamps, two frames ahead of
-  the DSP's clock.  Safe repeated
+  cycle stamps, a quarter second ahead
+  of the DSP's clock.  Safe repeated
   writes are omitted.
 
 DSP56001

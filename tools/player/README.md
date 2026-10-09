@@ -52,8 +52,11 @@ the DSP kernel's stream. Everything here is its specification and its gates.
 4. `play-gate`: `F030SID.TTP` plays each tune for some seconds under the
    DSP-calibrated Hatari; the DSP's checksum over every rendered frame equals
    the chip reference's (band-limited) rendering of the reference trace, the
-   pre-end overtake snapshot is zero, and elapsed time stays within 60 ms
-   of rendered audio duration.
+   pre-end overtake snapshot is zero, and the audio's length stays within
+   60 ms of the rendered frames' duration. The audio runs from the DSP's
+   first released frame to the end of what is buffered at the render
+   endpoint (until 2026-10-09 the gate timed from before the init routine to
+   the render endpoint).
    The SSI underrun flag must also be clear. A checksum match alone does not
    pass timing; `--plain` skips checksum comparison while retaining timing
    and render-clock checks.

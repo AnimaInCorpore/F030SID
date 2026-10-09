@@ -3,7 +3,7 @@
 ; Every exchange is a burst of 24-bit host words followed by exactly one
 ; reply word. Commands are listed with their trailing argument words.
 
-DSP_PROTOCOL_VERSION equ     11
+DSP_PROTOCOL_VERSION equ     12
 
 DSP_CMD_PING        equ     $010000     ; -> DSP_REPLY_HELLO
 DSP_CMD_WRITE_REG   equ     $020000     ; reg, value -> OK
@@ -29,11 +29,12 @@ DSP_FILTER_WORDS    equ     8
 DSP_CMD_STREAM_START equ    $100000     ; -> OK (clock 0, queue empty, transmitter on)
 DSP_CMD_STREAM_PUSH equ     $110000     ; count, count * (cycle, register, value), horizon -> queue entries free
 DSP_CMD_STREAM_READ equ     $120000     ; index -> status word: 0 started, 1 checksum, 2 least ring
-                                        ; fill (frames), 3 queue entries, 4 render clock, 5 overtakes, 6 SSI underrun flag
+                                        ; fill (frames), 3 queue entries, 4 render clock, 5 overtakes, 6 SSI underrun flag,
+                                        ; 7 ring fill now (frames)
 DSP_CMD_STREAM_STOP equ     $130000     ; -> OK
 DSP_CMD_STREAM_PLAIN equ    $140000     ; -> OK (after START: render without the checksum, which costs
                                         ; ten cycles a frame and only the gates read)
-DSP_STREAM_QUEUE    equ     256         ; write queue entries
+DSP_STREAM_QUEUE    equ     1024        ; write queue entries
 
 ; The SID register file: 25 write-only registers plus the 4 read-only ones,
 ; mirrored in a 32-word X-memory shadow indexed by the SID address.

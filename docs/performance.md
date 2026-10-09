@@ -14,7 +14,45 @@ validation and whole-song coverage remain outstanding.
 
 ## Two-minute load check
 
-Date: 2026-10-05.
+### Current check, 2026-10-09
+
+The same seventeen tunes, first 120 seconds, default subsong and the header's
+chip model, normal and diagnostic playback, one run at a time on the
+DSP-calibrated Hatari. Player SHA-256
+`8303f11d0c433e49b2fc2fe14a4d42fabde3650b6151e09d93c3f615bc993e2c`
+(the FreeMiNT player, protocol v12), built on commit `9e0a24f` plus the
+changes this check describes. All seventeen render clocks and diagnostic
+checksums match the C reference; `stream-gate` and `dsp-gate` pass.
+
+**Sixteen tunes pass both modes; Monofail exceeds real time** with 4
+overtakes in normal playback (120.34 s of audio) and 15 with diagnostics
+(121.26 s). Every passing tune measures 120.01 s of audio for 120.00 s of
+frames: the extra 5.2 ms is the silence before the first frame. Least ring
+fills are within a few dozen frames of the 2026-10-05 check (808 Love 1595
+normal, 823 diagnostic; all others above 2800).
+
+The pacing check now times the audio itself: from the DSP's first released
+frame to the end of what is still buffered at the render endpoint
+([gate](../tools/player/README.md)). Until this check it timed from before the tune's
+init routine to the render endpoint, so the start-up counted and the
+buffered 72.9 ms did not. By that older figure, logged beside the new one,
+Edge of Disgrace, Ghouls n Ghosts, Last Ninja 2 and RoboCop 3 measure
+120.04-120.17 s, their long init routines, and the other tunes 119.94-119.97 s.
+Those four tunes now pass because the init no longer counts, not because the
+player became faster. The tolerance is still 60 ms.
+
+The measurement change found a real start-up fault: the DSP placed the first
+frame one frame ahead of the transmitter, the transmitter passed it while it
+was computed, and every playback began with 83 ms of silence. It now goes
+256 frames ahead ([kernel](dsp-kernel.md#ssi-stream)).
+
+Logs: `build/check3-20261009-plain.log`, `build/check3-20261009-sum.log` and
+`build/kernel-gates-20261009.log` (ignored). The intermediate builds of the
+day are compared in [pacing](#pacing-and-the-write-queue).
+
+### Previous check, 2026-10-05
+
+The rest of this section describes the check before the FreeMiNT player.
 
 On DSP-calibrated Hatari, the first **120 seconds** of seventeen single-SID PSIDs were checked with their default subsong and header-selected chip model. Each tune was run with the diagnostic checksum enabled and again in normal playback mode. All seventeen render clocks and diagnostic checksums match the C reference (100,306,647 rendered frames in the diagnostic runs). **Monofail exceeds real time**: normal playback records five overtakes; diagnostic playback records seventeen. Four other tunes exceed the unchanged 60 ms pacing tolerance without overtakes. Twelve tunes pass the complete player gate in both modes.
 
@@ -252,6 +290,71 @@ the forms costed on paper (multiplies with masks, 64-entry and 1024-entry
 tables) came to 28-33, so the passage itself was not brought under the
 budget; 73 ms of render-ahead carry it.
 
+### Pacing and the write queue
+
+The queue holds 1024 writes (it was 256; X:$2700-$2fff was unused). The
+player keeps 250,000 cycles of tune generated ahead (it was 40,000),
+generated 40,000 at a time with a push after each step, and a push may send
+the whole queue. Passes stay
+5 ms apart under TOS. Under MiNT they become 20 ms, the scheduler's tick
+([FreeMiNT](player.md#under-freemint)). The deeper lead is what carries MiNT
+passes that other programs delay.
+
+How often the player passes matters more than how far ahead it works.
+Monofail, 120 s, normal playback, 8580, DSP-calibrated Hatari, TOS 4.02,
+2026-10-09:
+
+| Pass | Lead | Push at most | Overtakes | Time for 120 s |
+| --- | ---: | ---: | ---: | ---: |
+| original player (supervisor, host port polled) | 40,000 | 200 | 5 | 120.45 s |
+| 5 ms, `Dsp_BlkHandShake` | 40,000 | 200 | 4 | 120.38 s |
+| 5 ms | 250,000 | 200 | 4 | 120.42 s |
+| 5 ms, at most 100,000 a pass | 250,000 | 1024 | 4 | 120.42 s |
+| **5 ms, 40,000 a step (current)** | **250,000** | **1024** | **4** | **120.30 s** |
+| 40 ms | 250,000 | 1024 | 113 | 129.54 s |
+| 40 ms | 250,000 | 200 | 567 | 167.35 s |
+
+Monofail keeps the DSP busy without pause. The DSP renders nothing while it
+takes a push, and it takes each word at the 68030's pace. Small pushes every
+5 ms fit around the rendering; a large push every 40 ms stops it for too
+long, and 200 writes per 40 ms cannot keep up at all. The handshaking
+transport costs nothing measurable against the original's polled port. With
+diagnostics Monofail has 15 overtakes in 121.22 s (17 in 121.45 s before).
+
+Generating the whole lead in one pass delayed the first push: 808 Love then
+took 120.08 s and missed the 60 ms pacing tolerance (120.04 s before).
+Generating 40,000 cycles at a time and pushing each step gives 119.97 s
+(normal) and 119.96 s (diagnostic). Capping a pass at 40,000 cycles without
+continuing fell behind under MiNT, where passes come late.
+
+The two-minute check of all seventeen tunes ran on 2026-10-09 with the
+100,000-per-pass build (`build/check-20261009-{plain,sum}.log`): every checksum
+and render clock matched; apart from 808 Love's pacing (fixed as above) and
+Monofail's slightly lower overtake counts, every result was within 0.06 s and a
+few frames of the 2026-10-05 check. The play-gate, 808 Love and Monofail were
+re-run on the current build.
+
+### CPU time on the 68030
+
+Monofail, 8580, normal playback, a 26-second window inside a 60-second run
+under TOS (DSP-calibrated Hatari, 2026-10-09, player
+`e54ff04226b6aa35`):
+
+| Part | Share of the 68030 |
+| --- | ---: |
+| 6510 emulation and PSID | 59.5% |
+| Write logging and pushes (`log_to_pend`, `push_pending`, filter coefficients) | 9.6% |
+| DSP transfer (`Dsp_BlkHandShake` 4.5%, player side 3.3%) | 7.8% |
+| Waiting: tick polling 8.2% plus the trap overhead of its `Supexec` reads | about 21% |
+| Other ROM | 1.6% |
+
+About 6,000 of the 6,300 traps a second are `Supexec` tick reads in the
+waiting loop, so nearly all of the 13.2% ROM trap dispatch belongs to the
+wait. That leaves about 79% of the CPU as Monofail's own work, against under 1%
+for `music_1`. The DSP transfer runs 159 transactions a second. Speeding up
+heavy tunes on the 68030 therefore means the 6510 core, not the transport.
+Hatari's 68030 is not cycle exact; a Falcon's figures may differ.
+
 ## Remaining deadlines
 
 Measured short windows still exceed the frame budget: two top-rate noise
@@ -268,7 +371,8 @@ waveform/sync traffic. Any arithmetic change must retain exact sample-gate
 results; a real-time claim also needs zero overtakes and adequate buffer margin.
 
 The player stops when the render clock reaches the endpoint, leaving up to
-72.9 ms of buffered audio unplayed. Pacing measurements include initialization.
-Three of the four pacing failures have long init routines; RoboCop 3's offset
-is not explained by its first write. No tolerance was relaxed to hide them.
+72.9 ms of buffered audio unplayed. Until 2026-10-09 pacing measurements
+included initialization, which made four tunes with long init routines fail;
+the gate now times the audio ([current check](#current-check-2026-10-09)).
+The 60 ms tolerance was not changed.
 RSID interrupts, interrupt-driven digis and extra SIDs remain unsupported.

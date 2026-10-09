@@ -86,11 +86,11 @@ G_STREAM        equ     $46             ; nonzero: the SSI stream runs
 G_DTMIN         equ     $3e             ; Y short: cycles of the current oscillator step
 G_HOR           equ     $48             ; stream: the horizon as the host last gave it
 ; X:$49 is spare: the stream write pointer is kept in n6.
-G_LAST          equ     $4a             ; stream: ring fill after the last rendered frame
+G_PLAIN         equ     $4a             ; stream: nonzero: no checksum (DSP_CMD_STREAM_PLAIN)
 G_PRIMED        equ     $4b             ; stream: the ring reached its target once
 G_FHEAD         equ     $4c             ; write queue: next entry out
 G_FTAIL         equ     $4d             ; write queue: next entry in
-; stream status, DSP_CMD_STREAM_READ index 0..6 (keep the order)
+; stream status, DSP_CMD_STREAM_READ index 0..7 (keep the order)
 G_STAT          equ     $50
 G_STARTED       equ     $50             ; the first frame has been released: the ring is in use
 G_SUM           equ     $51             ; checksum of the rendered frames: sum = 3*sum + chip + v1 + v2 + v3
@@ -99,7 +99,8 @@ G_FCNT          equ     $53             ; write queue entries
 G_CYC           equ     $54             ; render clock, SID cycles mod 2^24
 G_UNDER         equ     $55             ; times the transmitter overtook the renderer
 G_TUE           equ     $56             ; bit 0: the SSI reported a transmit underrun
-G_PLAIN         equ     $57             ; stream: nonzero: no checksum (DSP_CMD_STREAM_PLAIN)
+G_LAST          equ     $57             ; ring fill after the last rendered frame (status 7: the host adds
+                                        ; what is still buffered at the endpoint to its timing)
 F_WL            equ     $58             ; the filter outputs' gains / 2 (Q23, host-derived with the coefficients):
 F_WB            equ     $59             ; low-pass, band-pass, high-pass,
 F_WH            equ     $5a
@@ -115,9 +116,9 @@ BL_CYC16        equ     1313185         ; SID cycles per frame, Q16 (SID_CYC_Q24
 BL_MAXCNT       equ     2047*$fff       ; the edge countdown is kept in units of $fff, at most 2047 frames
 
 ; The stream's memory (external X, above the tables)
-FIFO_BASE       equ     $2400           ; write queue: 256 entries of cycle, register, value
-FIFO_END        equ     $2700
-FIFO_SIZE       equ     256
+FIFO_BASE       equ     $2400           ; write queue: 1024 entries of cycle, register, value (to X:$2fff)
+FIFO_END        equ     $3000
+FIFO_SIZE       equ     1024
 RING_BASE       equ     $3000           ; 4096 frames, one word each (to X:$3fff); the SSI interrupt reads it through r3/m3
 RING_WORDS      equ     4096
 RING_TARGET     equ     3584            ; render ahead until this many frames wait (72.9 ms)
@@ -656,8 +657,9 @@ stream_step:
         move    x:<G_HREM,a             ; nothing released yet: the transmitter plays the empty ring
         tst     a
         jle     main_loop
-        move    r3,a                    ; the first frame goes just ahead of the transmitter
-        move    #>RING_BASE-1,x0
+        move    r3,a                    ; the first frame goes 256 frames (5.2 ms) ahead of the transmitter.
+        move    #>RING_BASE-256,x0      ; Placed just ahead, the transmitter passed it while the first frame
+                                        ; was computed and played a whole ring (83 ms) of silence first.
         sub     x0,a
         move    #>RING_WORDS-1,x0
         and     x0,a

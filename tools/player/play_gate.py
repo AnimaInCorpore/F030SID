@@ -74,16 +74,22 @@ def one(args, tune, model):
     label = f"{name:<20}{model:>6}"
     if not os.path.exists(out):
         return label, f"no output; console:\n{open(os.path.join(gate, 'hatari.out')).read()[-400:]}"
-    g_cycles, g_sum, minfill, over_fed, tue, over_end, cpu_cycles, ticks = struct.unpack(">8I", open(out, "rb").read())
+    words = struct.unpack(">10I", open(out, "rb").read())
+    g_cycles, g_sum, minfill, over_fed, tue, over_end, cpu_cycles, ticks, stream_ticks, end_fill = words
     play = frames * 512 / 25175000
-    info = (f"{frames} frames in {ticks / 200:.2f} s (playing time {play:.2f} s), least ring fill {minfill} of 3584 frames")
+    # The audio runs from the DSP's first released frame to the end of what is still
+    # buffered at the render endpoint; the older figure ran from before the tune's init
+    # routine to the render endpoint, so it depended on the start-up and the ring.
+    audio = stream_ticks / 200 + end_fill * 512 / 25175000
+    info = (f"{frames} frames in {audio:.2f} s of audio (playing time {play:.2f} s; {ticks / 200:.2f} s from "
+            f"start to render end), least ring fill {minfill} of 3584 frames")
     if g_cycles != cycles:
         return label, f"FAIL: {g_cycles} cycles rendered, expected {cycles}; {info}"
     if g_sum != checksum and not args.plain:
         return label, f"FAIL: checksum ${g_sum:06x}, expected ${checksum:06x}; {info}"
     if over_fed or (tue & 1):
         return label, f"FAIL: not real time: {over_fed} overtakes, SSI underrun flag {tue & 1}; {info}"
-    if abs(ticks / 200 - play) > 0.06:
+    if abs(audio - play) > 0.06:
         return label, f"FAIL: not paced by the transmitter; {info}"
     return label, f"{'real time (no checksum)' if args.plain else 'identical, real time'}: {info}"
 

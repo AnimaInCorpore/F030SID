@@ -17,6 +17,15 @@
 ; What the reference model of all this is: tools/player/psidref.c for the 6510
 ; side, src/ref/sid_ref.c for the chip. The gate requires the DSP's checksum
 ; over the played frames to equal the reference's.
+;
+; The player is an ordinary user-mode process, so it runs under FreeMiNT (with
+; or without memory protection) as well as under TOS. It talks to the DSP only
+; through XBIOS (Dsp_BlkHandShake), and it reads the 200 Hz tick only through
+; Supexec. Between passes it sleeps in Fselect, which gives the other processes
+; the CPU; under TOS, which has no Fselect, it waits on the 200 Hz tick instead.
+; It locks the DSP and the sound system before using them, and a SIGINT,
+; SIGTERM, SIGQUIT or SIGHUP stops the tune the same way a key does, so the
+; DSP and the sound system are always released.
 
         include "xbios.i"
         include "protocol.i"
@@ -27,9 +36,15 @@
 DSP_X_WORDS     equ     8192
 DSP_Y_WORDS     equ     8192
 DSP_ABILITY     equ     3
-DSP_HOST_ISR    equ     $ffffa202
-DSP_HOST_DATA   equ     $ffffa204
-HZ200           equ     $4ba
+HZ200           equ     $4ba            ; _hz_200, read through Supexec
+EINVFN          equ     -32             ; GEMDOS: no such function (TOS has no Fselect)
+PASS_MS         equ     5               ; sleep between passes: one 200 Hz tick (MiNT rounds it up to its 20 ms tick)
+TX_MAX          equ     4200            ; words of one DSP transaction (the largest is a 4096-word table)
+STACK_SIZE      equ     8192
+SIGHUP          equ     1
+SIGINT          equ     2
+SIGQUIT         equ     3
+SIGTERM         equ     15
 
 SOUND_STEREO16  equ 1
 SOUND_DSP_XMIT  equ 1
@@ -46,8 +61,11 @@ SOUND_DMA_STOP  equ 0
 SNDSTAT_RESET   equ 1
 
 SID_CLOCK       equ     985248          ; PAL
-GEN_LEAD        equ     40000           ; cycles of tune kept generated ahead of the DSP's render clock
-PUSH_MAX        equ     200             ; queue entries per push
+GEN_STEP        equ     40000           ; cycles of tune generated between pushes: the first push does not wait
+                                        ; for a quarter second of tune, and a late pass still catches up
+GEN_LEAD        equ     250000          ; cycles of tune kept generated ahead of the DSP's render clock (a quarter
+                                        ; second: it covers the passes MiNT's scheduler gives to other processes)
+PUSH_MAX        equ     DSP_STREAM_QUEUE ; queue entries per push
 MAX_LOG         equ     4000            ; SID writes of one generation step
 MAX_PEND        equ     40000           ; queue entries waiting to be pushed
 FILE_MAX        equ     66000
@@ -56,8 +74,33 @@ SNAPSHOT_BEFORE equ     40000
         text
 
 start:
-        move.l  4(sp),a0                ; basepage: the command tail
-        lea     $80(a0),a0
+        move.l  4(sp),a0                ; basepage
+        lea     stack_top,sp            ; our own stack, then give back the rest of the TPA
+        move.l  $0c(a0),d0              ; text + data + bss + basepage
+        add.l   $14(a0),d0
+        add.l   $1c(a0),d0
+        add.l   #$100,d0
+        move.l  a0,-(sp)
+        move.l  d0,-(sp)                ; Mshrink(0, basepage, size)
+        move.l  a0,-(sp)
+        clr.w   -(sp)
+        move.w  #$4a,-(sp)
+        trap    #1
+        lea     12(sp),sp
+        move.w  #1,-(sp)                ; Pdomain(1): MiNT semantics (EINVFN under TOS)
+        move.w  #$119,-(sp)
+        trap    #1
+        addq.l  #4,sp
+        moveq   #SIGHUP,d0              ; Psignal: these stop the tune (EINVFN under TOS)
+        bsr     catch_signal
+        moveq   #SIGINT,d0
+        bsr     catch_signal
+        moveq   #SIGQUIT,d0
+        bsr     catch_signal
+        moveq   #SIGTERM,d0
+        bsr     catch_signal
+        move.l  (sp)+,a0
+        lea     $80(a0),a0              ; the command tail
         moveq   #0,d0
         move.b  (a0)+,d0
         lea     cmdline,a1
@@ -126,6 +169,12 @@ start:
         lea     filebuf+$56,a0
         bsr     print_field
 
+        Dsp_Lock                        ; the DSP and the sound system are ours until the end
+        tst.w   d0
+        bne     dspbusy
+        Locksnd
+        tst.l   d0
+        bmi     sndbusy
         Dsp_Reserve #DSP_X_WORDS,#DSP_Y_WORDS
         tst.l   d0
         bmi     nodsp
@@ -135,8 +184,7 @@ start:
         cmp.l   #DSP_STAGE2_REPLY_OK,dsp_stage2_reply
         bne     nodsp
 
-        Locksnd                         ; the sound bring-up (ratetest.s documents each step)
-        Sndstatus #SNDSTAT_RESET
+        Sndstatus #SNDSTAT_RESET        ; the sound bring-up (ratetest.s documents each step)
         Soundcmd #SOUND_LTATTEN,#0
         Soundcmd #SOUND_RTATTEN,#0
         Setmode #SOUND_STEREO16
@@ -147,19 +195,8 @@ start:
         Dsptristate #1,#0
         Devconnect #SOUND_DSP_XMIT,#SOUND_DAC,#SOUND_CLK25M,#SOUND_PRESCALE,#SOUND_NO_SHAKE
 
-        clr.l   -(sp)                   ; Super(0): the host port and the 200 Hz tick need it
-        move.w  #$20,-(sp)
-        trap    #1
-        addq.l  #6,sp
-        move.l  d0,old_ssp
-
         bsr     dsp_setup
         bsr     play
-
-        move.l  old_ssp,-(sp)
-        move.w  #$20,-(sp)
-        trap    #1
-        addq.l  #6,sp
 
         Dsptristate #0,#0
         Unlocksnd
@@ -171,7 +208,7 @@ start:
         tst.l   d0
         bmi.s   .bye
         move.w  d0,handle
-        Fwrite  handle,#8*4,results
+        Fwrite  handle,#10*4,results
         Fclose  handle
 .bye:   Cconws  txt_done
         move.w  stop_key,-(sp)          ; Pterm: the key that stopped the tune, 0 if none did
@@ -185,7 +222,15 @@ nofile: Cconws  txt_nofile
 notpsid:
         Cconws  txt_notpsid
         bra.s   wait_exit
+dspbusy:
+        Cconws  txt_dspbusy
+        bra.s   wait_exit
+sndbusy:
+        Cconws  txt_sndbusy
+        Dsp_Unlock
+        bra.s   wait_exit
 nodsp:  Cconws  txt_nodsp
+        Unlocksnd
         Dsp_Unlock
 wait_exit:                              ; from the desktop the screen is gone at once: wait for a key
         Cconws  txt_key
@@ -276,7 +321,7 @@ print_field:                            ; a0 -> 32 characters, not necessarily t
         Cconws  linebuf
         rts
 
-; ------------------------------------------------------------ DSP set-up (supervisor)
+; ------------------------------------------------------------ DSP set-up
 
 ; address, count, table offset: DSP_CMD_LOAD_X / _Y
         macro   LOADTAB cmd,addr,count,offset
@@ -289,6 +334,7 @@ print_field:                            ; a0 -> 32 characters, not necessarily t
         endm
 
 dsp_setup:
+        move.l  #tx_buf,tx_tail
         move.l  #DSP_CMD_PING,d0
         bsr     dsp_put
         bsr     dsp_get
@@ -336,23 +382,43 @@ load_table:                             ; d0 = command, d1 = DSP address, d2 = c
         dbra    d2,.w
         bra     dsp_get
 
-; d0.l = word (24 bits), paced on TXDE
+; The host port through XBIOS: dsp_put queues a word of the transaction,
+; dsp_get sends the queue with Dsp_BlkHandShake and returns the DSP's one-word
+; reply. Every command of the protocol is words in, then one word back. (Not
+; Dsp_BlkUnpacked: TOS waits for the port only before the first word of a
+; block, and the DSP reads commands between frames, so later words overwrite
+; each other. The handshaking call waits before every word; the words are
+; three bytes each.)
+
+; d0.l = word (24 bits)
 dsp_put:
-        btst    #1,DSP_HOST_ISR
-        beq.s   dsp_put
-        move.l  d0,DSP_HOST_DATA
+        move.l  a0,-(sp)
+        move.l  tx_tail,a0
+        swap    d0
+        move.b  d0,(a0)+
+        swap    d0
+        move.w  d0,-(sp)
+        move.b  (sp)+,(a0)+
+        move.b  d0,(a0)+
+        move.l  a0,tx_tail
+        move.l  (sp)+,a0
         rts
 
-; -> d0.l = word, paced on RXDF; the low byte is read last (it clears RXDF)
+; -> d0.l = word
 dsp_get:
-        btst    #0,DSP_HOST_ISR
-        beq.s   dsp_get
+        movem.l d1-d2/a0-a2,-(sp)
+        move.l  tx_tail,d0
+        sub.l   #tx_buf,d0
+        divu.l  #3,d0
+        move.l  #tx_buf,tx_tail
+        Dsp_BlkHandShake tx_buf,d0,rx_word,#1
         moveq   #0,d0
-        move.b  DSP_HOST_DATA+1,d0
+        move.b  rx_word,d0
         lsl.l   #8,d0
-        move.b  DSP_HOST_DATA+2,d0
+        move.b  rx_word+1,d0
         lsl.l   #8,d0
-        move.b  DSP_HOST_DATA+3,d0
+        move.b  rx_word+2,d0
+        movem.l (sp)+,d1-d2/a0-a2
         rts
 
 ; d0 = status index -> d0 = value
@@ -364,7 +430,7 @@ stream_read:
         bsr     dsp_put
         bra     dsp_get
 
-; ------------------------------------------------------------ playing (supervisor)
+; ------------------------------------------------------------ playing
 
 play:
         movem.l d0-d7/a0-a6,-(sp)
@@ -386,6 +452,7 @@ play:
         clr.l   fc_coef
         clr.l   res_coef
         clr.l   snap_done
+        clr.l   stream_t0
         lea     reg_shadow,a0           ; no register has been written yet
         moveq   #24,d0
 .shad:  move.w  #$ffff,(a0)+
@@ -402,17 +469,18 @@ play:
         bsr     dsp_put
         bsr     dsp_get
 .sum:
-        move.l  HZ200.w,results+28
+        bsr     read_tick
+        move.l  d0,results+28
 
         bsr     log_reset               ; the init routine: its writes start at cycle 0
         bsr     psid_start
         move.l  d7,gen_cycle
         bsr     log_to_pend
 
-.loop:  move.l  HZ200.w,d0              ; once per 5 ms tick
-        cmp.l   last_tick,d0
-        beq.s   .loop
-        move.l  d0,last_tick
+.loop:  bsr     wait_pass
+        tst.w   stop_signal             ; a signal stops the tune like a key
+        bne     .finish
+        move.l  gen_cycle,gen_mark
 
         moveq   #4,d0                   ; the DSP's render clock, extended to 32 bits
         bsr     stream_read
@@ -440,15 +508,19 @@ play:
         move.l  #1,snap_done
 
 .gen:   tst.l   gen_done                ; keep the tune generated GEN_LEAD cycles ahead of the clock
-        bne.s   .push
+        bne     .push
         move.l  gen_cycle,d0
         sub.l   d6,d0
         cmp.l   #GEN_LEAD,d0
-        bge.s   .push
+        bge     .push
+        move.l  gen_cycle,d0            ; (GEN_STEP at a time, each pushed before the next)
+        sub.l   gen_mark,d0
+        cmp.l   #GEN_STEP,d0
+        bge     .more
         move.l  pend_tail,d0            ; (unless the queue to the DSP is badly behind)
         sub.l   #pend,d0
         cmp.l   #(MAX_PEND-MAX_LOG*(1+DSP_FILTER_WORDS))*12,d0
-        bhi.s   .push
+        bhi     .push
         bsr     log_reset
         move.l  gen_cycle,d7
         move.l  end_cycle,d5
@@ -456,26 +528,51 @@ play:
         tst.l   d0
         bpl.s   .ran
         move.l  #1,gen_done
-        bra.s   .push
+        bra     .push
 .ran:   move.l  d7,gen_cycle
         bsr     log_to_pend
         bra.s   .gen
 
+.more:  bsr     push_pending            ; a step is generated and the lead is still short:
+        bsr     note_start
+        tst.w   stop_signal             ; push it and go on in the same pass
+        bne     .finish
+        Cconis
+        tst.w   d0
+        bne.s   .key0
+        move.l  gen_cycle,gen_mark
+        bra     .gen
+
 .push:  bsr     push_pending
-        move.w  #11,-(sp)               ; Cconis: a key stops
-        trap    #1
-        addq.l  #2,sp
+        bsr     note_start
+        Cconis                          ; a key stops
         tst.w   d0
         beq     .loop
-        move.w  #7,-(sp)                ; Crawcin: take it
-        trap    #1
-        addq.l  #2,sp
-        move.b  d0,stop_key+1           ; (the exit code: SIDMENU.TOS starts the next tune from it)
+.key0:  Crawcin
+        tst.l   d0
+        bne.s   .key
+        moveq   #-1,d0                  ; (never 0: the scan code is in it)
+.key:   move.b  d0,stop_key+1           ; (the exit code: SIDMENU.TOS starts the next tune from it)
 
 .finish:
-        move.l  HZ200.w,d0
+        bsr     read_tick
+        move.l  d0,d1                   ; ticks since the first frame was released
+        sub.l   stream_t0,d1
+        move.l  d1,results+32
         sub.l   results+28,d0
         move.l  d0,results+28
+        tst.l   snap_done               ; a pass that came later than SNAPSHOT_BEFORE (MiNT, a busy
+        bne.s   .snapped                ; neighbour) skips the window: take the counters here
+        moveq   #2,d0
+        bsr     stream_read
+        move.l  d0,results+8
+        moveq   #5,d0
+        bsr     stream_read
+        move.l  d0,results+12
+.snapped:
+        moveq   #7,d0                   ; what is still buffered: the audio ends that much later
+        bsr     stream_read
+        move.l  d0,results+36
         move.l  clock32,results
         moveq   #1,d0
         bsr     stream_read
@@ -491,6 +588,71 @@ play:
         bsr     dsp_put
         bsr     dsp_get
         movem.l (sp)+,d0-d7/a0-a6
+        rts
+
+; Note the tick at which the DSP releases its first frame: the audio starts
+; there. Asked after each push until it has happened.
+note_start:
+        tst.l   stream_t0
+        bne.s   .out
+        movem.l d0-d1,-(sp)
+        moveq   #0,d0
+        bsr     stream_read
+        tst.l   d0
+        beq.s   .not
+        bsr     read_tick
+        move.l  d0,stream_t0
+.not:   movem.l (sp)+,d0-d1
+.out:   rts
+
+; Wait for the next pass. Under MiNT, Fselect with only a timeout sleeps and
+; lets the other processes run; TOS has no Fselect (EINVFN), and there the
+; wait is PASS_MS on the 200 Hz tick.
+wait_pass:
+        movem.l d0-d2/a0-a2,-(sp)
+        tst.w   no_fselect
+        bne.s   .tick
+        clr.l   -(sp)                   ; Fselect(PASS_MS, 0, 0, 0)
+        clr.l   -(sp)
+        clr.l   -(sp)
+        move.w  #PASS_MS,-(sp)
+        move.w  #$11d,-(sp)
+        trap    #1
+        lea     16(sp),sp
+        cmp.l   #EINVFN,d0
+        bne.s   .out
+        move.w  #1,no_fselect
+.tick:  bsr.s   read_tick
+        move.l  d0,d1
+        addq.l  #PASS_MS/5,d1
+.same:  bsr.s   read_tick
+        cmp.l   d1,d0
+        bmi.s   .same
+.out:   movem.l (sp)+,d0-d2/a0-a2
+        rts
+
+; -> d0.l the 200 Hz tick (_hz_200 is readable only in supervisor mode)
+read_tick:
+        movem.l d1-d2/a0-a2,-(sp)
+        Supexec hz200_super
+        movem.l (sp)+,d1-d2/a0-a2
+        rts
+hz200_super:
+        move.l  HZ200.w,d0
+        rts
+
+; d0.w = signal: catch_this sets stop_signal.
+catch_signal:
+        movem.l d0-d2/a0-a2,-(sp)
+        pea     catch_this              ; Psignal(sig, handler)
+        move.w  d0,-(sp)
+        move.w  #$112,-(sp)
+        trap    #1
+        addq.l  #8,sp
+        movem.l (sp)+,d0-d2/a0-a2
+        rts
+catch_this:                             ; called in user mode, the signal on the stack
+        move.w  #1,stop_signal
         rts
 
 log_reset:
@@ -679,6 +841,8 @@ txt_nofile:     dc.b    'cannot open the tune',13,10,0
 txt_notpsid:    dc.b    'not a PSID file',13,10,0
 txt_nodsp:      dc.b    'the DSP did not start',13,10,0
 txt_done:       dc.b    'done',13,10,0
+txt_dspbusy:    dc.b    'the DSP is in use',13,10,0
+txt_sndbusy:    dc.b    'the sound system is in use',13,10,0
 txt_key:        dc.b    'press a key',13,10,0
 inf_name:       dc.b    'AUTOPLAY.INF',0
 out_name:       dc.b    'PLAYOUT.BIN',0
@@ -695,7 +859,6 @@ tab8580:        incbin  "sidtab_8580.bin"
         bss
 
 dsp_stage2_reply: ds.l  1
-old_ssp:        ds.l    1
 tab_base:       ds.l    1
 file_len:       ds.l    1
 opt_song:       ds.l    1
@@ -706,12 +869,15 @@ opt_plain:      ds.l    1
 end_cycle:      ds.l    1
 gen_cycle:      ds.l    1               ; 6510 cycles run: every write below it is known
 gen_done:       ds.l    1
+gen_mark:       ds.l    1               ; gen_cycle at the last push of this pass
 clock32:        ds.l    1
 clock24:        ds.l    1
 h_sent:         ds.l    1
 dsp_free:       ds.l    1
-last_tick:      ds.l    1
+tx_tail:        ds.l    1               ; the end of the DSP transaction being built
+rx_word:        ds.l    1
 snap_done:      ds.l    1
+stream_t0:      ds.l    1               ; the tick of the first released frame, 0 before it
 reg_shadow:     ds.w    25              ; the registers as last sent ($ffff: not yet)
         even
 fc_now:         ds.l    1
@@ -721,9 +887,11 @@ res_coef:       ds.l    1
 pend_head:      ds.l    1
 pend_tail:      ds.l    1
 coef:           ds.l    DSP_FILTER_WORDS
-results:        ds.l    8
+results:        ds.l    10
 handle:         ds.w    1
 stop_key:       ds.w    1
+stop_signal:    ds.w    1               ; set by the signal handler
+no_fselect:     ds.w    1               ; TOS: wait on the tick instead
 cmdline:        ds.b    130
 path:           ds.b    130
 linebuf:        ds.b    40
@@ -733,5 +901,8 @@ filebuf:        ds.b    FILE_MAX
 ram:            ds.b    65536+256+16
 wlog:           ds.l    MAX_LOG*3
 pend:           ds.l    MAX_PEND*3
+tx_buf:         ds.b    TX_MAX*3
+                ds.b    STACK_SIZE
+stack_top:
 
         end
